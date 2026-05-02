@@ -13,11 +13,15 @@ function initDemoMap() {
     crs:L.CRS.ESPG4326,
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
     maxZoom: 20});
-
+  var StreetMap =  L.tileLayer('https://{s}.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png', {
+    maxZoom: 20,
+    attribution: '&copy; OpenStreetMap France | &copy; <a href="https://openstreetmap.org">OpenStreetMap</a>'
+  })
 
   var baseLayers = {
     Satellite: Esri_WorldImagery,
-    "OSM map": Esri_DarkGreyCanvas
+    "OSM map": Esri_DarkGreyCanvas,
+    "Street Map": StreetMap
   };
 
   var map = L.map("map", {

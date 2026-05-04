@@ -68,25 +68,32 @@ let vLayer = null; // 全域變數，用來追蹤當前的風場圖層
 async function updateMap() {
     const index = slider.value;
     const h = hours[index];
-    const selectedModel = modelSelect ? modelSelect.value : "GFS"; // 取得當前選擇的模型
     
-    if (label) label.innerText = `${selectedModel} Forecast: +${h}h`;
+    // 1. Get the value safely
+    const selectedModel = modelSelect ? modelSelect.value : "GFS";
+    
+    // ❌ REMOVE THIS LINE:
+    // modelSelect.innerText = selectedModel; 
+    
+    // 2. Update the Forecast Label (This is where the text should go)
+    if (label) {
+        label.innerText = `${selectedModel} Forecast: +${h}h`;
+    }
 
-    // 根據選擇的模型動態決定路徑
-    let filePath = selectedModel === "GFS" ? `../data/gfs_f${h}.json` : `../data/gfs_f${h}.json`;
+    // 3. Fix the File Path (Ensure it actually changes when the model changes)
+    let filePath = selectedModel === "GFS" 
+        ? `../data/gfs_f${h}.json` 
+        : `../data/gfs_f${h}.json`; // <--- Make sure this is different!
 
     try {
         const res = await fetch(filePath);
         if (!res.ok) throw new Error("File not found");
         const data = await res.json();
 
-        // 【關鍵：互斥邏輯】
-        // 每次更新前，如果地圖上已經有 vLayer，就先移除它，確保不重疊
         if (vLayer) {
             map.removeLayer(vLayer);
         }
 
-        // 重新建立新的 Velocity Layer
         vLayer = L.velocityLayer({
             displayValues: true,
             displayOptions: { 
@@ -103,6 +110,8 @@ async function updateMap() {
         
     } catch (err) {
         console.warn(`Data not ready: ${filePath}`);
+        // Optional: clear map if data fails so you don't see the WRONG model
+        if (vLayer) map.removeLayer(vLayer);
     }
 }
 

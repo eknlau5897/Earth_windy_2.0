@@ -73,7 +73,7 @@ async function updateMap() {
     if (label) label.innerText = `${selectedModel} Forecast: +${h}h`;
 
     // 根據選擇的模型動態決定路徑
-    let filePath = selectedModel === "GFS" ? `../data/gfs_f${h}.json` : `../data/other_f${h}.json`;
+    let filePath = selectedModel === "GFS" ? `../data/gfs_f${h}.json` : `../data/gfs_f${h}.json`;
 
     try {
         const res = await fetch(filePath);

@@ -53,7 +53,7 @@ while true; do
 
         if [ -s "$GRIB" ]; then
             echo "📦 Converting to JSON..."
-            JAVA_OPTS="-Xmx4g" "$GRIB2JSON" "$GRIB" --compact \
+            JAVA_OPTS="-Xmx4g" "$GRIB2JSON" --data --compact -n \
     --filter.parameter 2,3 \
     --filter.surface 103 \
     --filter.value 100 \

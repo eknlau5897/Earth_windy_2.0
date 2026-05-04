@@ -44,6 +44,7 @@ while true; do
 
         GRIB="temp_${FILE_FHR}.grib2"
         JSON="data/gfs_f${FILE_FHR}.json"
+        NEW_JSON="data/gfs_${FILE_FHR}.json"
 
         echo "📥 Downloading GFS ${DATE} ${CYCLE}z +${FILE_FHR}h..."
     
@@ -54,7 +55,7 @@ while true; do
         if [ -s "$GRIB" ]; then
             echo "📦 Converting to JSON..."
             JAVA_OPTS="-Xmx4g" "$GRIB2JSON" -d -c -n --fp 2 -o "$JSON" "$GRIB"
-            jq '.[].value |= (.*100|round/100)' "$JSON" > "$JSON"
+            jq '.[].value |= (.*100|round/100)' "$JSON" > "$NEW_JSON"
             rm -f "$GRIB"
         else
             echo "⚠️  Forecast +${FILE_FHR} not available yet."

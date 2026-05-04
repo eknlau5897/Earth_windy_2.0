@@ -47,13 +47,13 @@ while true; do
 
         echo "📥 Downloading GFS ${DATE} ${CYCLE}z +${FILE_FHR}h..."
     
-        URL="https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl?file=gfs.t${CYCLE}z.pgrb2.0p25.f${FILE_FHR}&var_UGRD=on&var_VGRD=on&lev_10_m_above_ground=on&dir=%2Fgfs.${DATE}%2F${CYCLE}%2Fatmos"
+        URL="https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl?file=gfs.t${CYCLE}z.pgrb2.0p25.f${FILE_FHR}&var_UGRD=on&var_VGRD=on&lev_100_m_above_ground=on&dir=%2Fgfs.${DATE}%2F${CYCLE}%2Fatmos"
     
         curl -f -s "$URL" -o "$GRIB"
 
         if [ -s "$GRIB" ]; then
             echo "📦 Converting to JSON..."
-            JAVA_OPTS="-Xmx4g" "$GRIB2JSON" -d -n --fp 2 -o "$JSON" "$GRIB"
+            JAVA_OPTS="-Xmx4g" "$GRIB2JSON" -d -c -n \ --fp 2,3 \ --fs 103 \ --fv 100 \ "$GRIB" | jq -c '(.data[]) |= (.*100 | round / 100)' > "$JSON" "$GRIB"
             rm -f "$GRIB"
         else
             echo "⚠️  Forecast +${FILE_FHR} not available yet."

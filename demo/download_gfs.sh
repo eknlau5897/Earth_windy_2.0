@@ -53,11 +53,7 @@ while true; do
 
         if [ -s "$GRIB" ]; then
             echo "📦 Converting to JSON..."
-            JAVA_OPTS="-Xmx4g" "$GRIB2JSON" -d -c -n \
-    --filter.parameter 2\
-    --filter.surface 103 \
-    --filter.value 100 \
-    "$GRIB" | jq -c '(.data[]) |= (.*100 | round / 100)' > "$JSON"
+            JAVA_OPTS="-Xmx4g" "$GRIB2JSON" -d -c -n --fp 2 -c '(.data[]) |= (.*100 | round / 100)' "$GRIB"> "$JSON"
             rm -f "$GRIB"
         else
             echo "⚠️  Forecast +${FILE_FHR} not available yet."

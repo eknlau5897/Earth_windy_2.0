@@ -55,7 +55,6 @@ while true; do
             echo "📦 Converting to JSON..."
             JAVA_OPTS="-Xmx4g" "$GRIB2JSON" -q -d -c -n \
             --fp 2,3 --fs 103 --fv 100 "$GRIB" \
-
             | jq -c '(.data[]) |= (.*100 | round / 100)' > "$JSON"
             rm -f "$GRIB"
         else

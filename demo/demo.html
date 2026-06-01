@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D Global Weather Contourf Viewer</title>
+    <title>3D Global Weather Contourf & Dynamic Particle Viewer</title>
     
     <link href="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
     <script src="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Cesium.js"></script>
@@ -97,11 +97,26 @@
             font-size: 11px;
             color: #fff;
         }
+        .weather-popup {
+            position: absolute;
+            background: rgba(10, 10, 10, 0.85);
+            border: 1px solid rgba(255,255,255,0.2);
+            padding: 6px 10px;
+            border-radius: 5px;
+            font-size: 11px;
+            color: #fff;
+            pointer-events: none;
+            display: none;
+            z-index: 9999;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            backdrop-filter: blur(5px);
+        }
     </style>
 </head>
 <body>
 
     <div id="cesiumContainer"></div>
+    <div id="weatherPopup" class="weather-popup"></div>
 
     <div class="control-panel">
         <div class="control-group">
@@ -115,9 +130,9 @@
         <div class="control-group">
             <label for="modelSelect">3D Weather Model Target</label>
             <select id="modelSelect">
-                <option value="GFS">GFS Surface Wind (GPU)</option>
-                <option value="GFS 850hPa">GFS 850hPa Wind (GPU)</option>
-                <option value="ECMWF 10m">ECMWF 10m Wind (GPU)</option>
+                <option value="GFS">GFS Surface Wind</option>
+                <option value="GFS 850hPa">GFS 850hPa Wind</option>
+                <option value="ECMWF 10m">ECMWF 10m Wind</option>
             </select>
         </div>
 
@@ -127,6 +142,7 @@
         </div>
 
         <div class="control-group">
+            <button id="windToggleBtn" class="active">Wind Overlay: On</button>
             <button id="playBtn">Play Animation</button>
             <button id="iconBtn">GFS Smooth Rain</button>
             <button id="liveRadarBtn">RainViewer Live Map</button>
@@ -210,20 +226,26 @@
         let playTimer = null;            
         let satLayerActive = false;       
         let satelliteLayerInstance = null;
-        let gpuParticleSystemInstance = null; 
         
-        let currentRainLayerType = null; 
-        // We now use an array to track both split hemispheres simultaneously
+        // Dynamic visibility toggle switches
+        let windLayerActive = true; 
+        let currentModelGribDataset = null; 
+        
+        let activeWindLayers = []; 
         let activeRainLayers = []; 
+        let currentRainLayerType = null; 
+        let activeParticleSystems = [];
 
         const slider = document.getElementById('slider');
         const modelSelect = document.getElementById('modelSelect');
         const hourLabel = document.getElementById('hourLabel'); 
         const statusDisplay = document.getElementById('statusDisplay'); 
+        const windToggleBtn = document.getElementById('windToggleBtn');
         const playBtn = document.getElementById('playBtn');
         const iconBtn = document.getElementById('iconBtn');
         const liveRadarBtn = document.getElementById('liveRadarBtn');
         const satBtn = document.getElementById('satBtn');
+        const popupHUD = document.getElementById('weatherPopup');
 
         if (slider) slider.max = (hours.length - 1).toString(); 
 
@@ -236,16 +258,21 @@
         }
 
         // =========================================================================
-        // 4. HARDWARE-ACCELERATED HIGH-PERFORMANCE WIND PARTICLE ENGINE
+        // 4. WHITE WIND PARTICLE SYSTEM OVERLAY
         // =========================================================================
-        class CesiumWindParticleEngine {
+        class CesiumWhiteWindParticleEngine {
             constructor(scene, jsonData) {
                 this.scene = scene;
                 this.header = jsonData[0].header;
                 this.uData = jsonData[0].data;
                 this.vData = jsonData[1].data;
-                this.maxParticles = 35000; 
+                this.maxParticles = 18000; 
                 this.particles = [];
+                
+                this.alphaMultiplier = 0.0;
+                this.fadeDirection = 'in';
+                this.isDead = false;
+
                 this._initParticles();
                 this.removeEventListener = scene.preRender.addEventListener(this.updateAndDraw.bind(this));
             }
@@ -260,11 +287,24 @@
                 }
                 this.pointCollection = this.scene.primitives.add(new Cesium.PointPrimitiveCollection());
                 for (let i = 0; i < this.maxParticles; i++) {
-                    this.pointCollection.add({ pixelSize: 2.0, color: Cesium.Color.CYAN.withAlpha(0.6) });
+                    this.pointCollection.add({ pixelSize: 1.5, color: Cesium.Color.TRANSPARENT });
                 }
             }
 
             updateAndDraw() {
+                if (this.isDead) return;
+
+                if (this.fadeDirection === 'in') {
+                    this.alphaMultiplier += 0.08;
+                    if (this.alphaMultiplier >= 1.0) { this.alphaMultiplier = 1.0; this.fadeDirection = 'stable'; }
+                } else if (this.fadeDirection === 'out') {
+                    this.alphaMultiplier -= 0.08;
+                    if (this.alphaMultiplier <= 0.0) {
+                        this.destroy();
+                        return;
+                    }
+                }
+
                 const nx = this.header.nx; const ny = this.header.ny;
                 const lo1 = this.header.lo1; const la1 = this.header.la1;
                 const dx = this.header.dx; const dy = this.header.dy;
@@ -281,73 +321,203 @@
                     const index = row * nx + col;
 
                     let u = this.uData[index] || 0; let v = this.vData[index] || 0;
-                    p.lon += u * 0.005; p.lat += v * 0.005;
+                    p.lon += u * 0.004; p.lat += v * 0.004; 
 
-                    const position = Cesium.Cartesian3.fromDegrees(p.lon, p.lat, 6000.0);
+                    const position = Cesium.Cartesian3.fromDegrees(p.lon, p.lat, 8000.0);
                     const pointPrimitive = this.pointCollection.get(i);
                     pointPrimitive.position = position;
 
                     const speed = Math.sqrt(u*u + v*v);
-                    if (speed > 15) { pointPrimitive.color = Cesium.Color.YELLOW.withAlpha(0.7); }
-                    else if (speed > 5) { pointPrimitive.color = Cesium.Color.CYAN.withAlpha(0.6); }
-                    else { pointPrimitive.color = Cesium.Color.BLUE.withAlpha(0.3); }
+                    let targetAlpha = speed > 15 ? 0.75 : (speed > 5 ? 0.50 : 0.20);
+                    
+                    pointPrimitive.color = Cesium.Color.WHITE.withAlpha(targetAlpha * this.alphaMultiplier);
                 }
             }
 
+            fadeOutAndRetire() {
+                this.fadeDirection = 'out';
+            }
+
             destroy() {
-                if (this.removeEventListener) this.removeEventListener();
+                this.isDead = true;
+                if (this.removeEventListener) { this.removeEventListener(); this.removeEventListener = null; }
                 this.scene.primitives.remove(this.pointCollection);
+                activeParticleSystems = activeParticleSystems.filter(sys => sys !== this);
             }
         }
 
         // =========================================================================
-        // 5. DATA LOADING & PRECIPITATION PIPELINE MANAGEMENT
+        // 5. DATA LOADING & LAYER SCHEDULER PIPELINE
         // =========================================================================
         async function update3DGlobe() {
             const index = slider.value;
             const h = hours[index];
             const selectedModel = modelSelect.value;
 
+            // Handle rain toggles cleanly
             let gfsRainPath = `../data/gfs_rain_f${h}.json`;
             await handlePrecipitationPipelines(gfsRainPath);
 
+            // Fetch structural grid properties even if rendering state is muted (needed for fallback labels)
             let windPath = `../data/gfs_f${h}.json`;
             if (selectedModel === "GFS 850hPa") { windPath = `../data/gfs_850_f${h}.json`; }
             else if (selectedModel === "ECMWF 10m") { windPath = `../data/ecmwf_10m_f${h}.json`; }
 
-            statusDisplay.innerHTML = `Injecting JSON matrices to GPU: ${windPath}...`;
-
             try {
                 const res = await fetch(windPath);
-                if (!res.ok) throw new Error("JSON asset tracking array missing.");
+                if (!res.ok) throw new Error("JSON data array missing.");
                 const data = await res.json();
+
+                currentModelGribDataset = data;
 
                 const referenceTime = data[0].header.refTime;
                 const humanReadableTime = formatForecastTime(referenceTime, h);
-
                 hourLabel.innerHTML = `(+${h}h) <span style="color: #00ceff; font-weight: normal; font-size: 11px; margin-left: 4px;">📅 ${humanReadableTime}</span>`;
 
-                if (gpuParticleSystemInstance) {
-                    gpuParticleSystemInstance.destroy();
-                    gpuParticleSystemInstance = null;
+                // Wipe or update wind pipeline based on Master switch status
+                if (!windLayerActive) {
+                    clearWindVisualLayers();
+                    statusDisplay.innerHTML = `MODEL: ${selectedModel}\nRUN: ${referenceTime}\nVALID: ${humanReadableTime}\nWIND FIELD: Hidden (Engine Paused)`;
+                    return;
                 }
 
-                gpuParticleSystemInstance = new CesiumWindParticleEngine(viewer.scene, data);
-                statusDisplay.innerHTML = `MODEL: ${selectedModel}\nRUN: ${referenceTime}\nVALID: ${humanReadableTime}\nENGINE: WebGL 3D Hardware Core`;
+                statusDisplay.innerHTML = `Analyzing vector data array: ${windPath}...`;
+                
+                await renderSmoothWindSpeedField(data);
+
+                activeParticleSystems.forEach(sys => sys.fadeOutAndRetire());
+                const whiteParticles = new CesiumWhiteWindParticleEngine(viewer.scene, data);
+                activeParticleSystems.push(whiteParticles);
+
+                statusDisplay.innerHTML = `MODEL: ${selectedModel}\nRUN: ${referenceTime}\nVALID: ${humanReadableTime}\nENGINE: Vector Contour + Particle Core`;
 
             } catch (err) {
-                statusDisplay.innerHTML = `⚠️ WEBGL INGESTION ERROR:\n${err.message}`;
+                statusDisplay.innerHTML = `⚠️ VISUALIZATION ERROR:\n${err.message}`;
             }
         }
 
+        function clearWindVisualLayers() {
+            activeWindLayers.forEach(layer => viewer.imageryLayers.remove(layer));
+            activeWindLayers = [];
+            activeParticleSystems.forEach(sys => sys.fadeOutAndRetire());
+        }
+
         // =========================================================================
-        // 6. MULTI-SOURCE 3D PRECIPITATION ROUTER ENGINE
+        // 6. WIND SPEED SMOOTH RASTER CONTOURF MAP ENGINE
+        // =========================================================================
+        async function renderSmoothWindSpeedField(windData) {
+            activeWindLayers.forEach(layer => viewer.imageryLayers.remove(layer));
+            activeWindLayers = [];
+
+            const header = windData[0].header;
+            const uValues = windData[0].data; 
+            const vValues = windData[1].data; 
+
+            const nx = header.nx; const ny = header.ny;
+            const la1 = header.la1; const la2 = header.la2;
+
+            const renderWidth = 1024; 
+            const renderHeight = 1024;
+
+            function getVectorMagnitude(c, r) {
+                if (c < 0) c = 0; if (c >= nx) c = nx - 1;
+                if (r < 0) r = 0; if (r >= ny) r = ny - 1;
+                const idx = r * nx + c;
+                const u = uValues[idx] || 0;
+                const v = vValues[idx] || 0;
+                return Math.sqrt(u * u + v * v);
+            }
+
+            function generateWindHemisphereCanvas(isWestern) {
+                const canvas = document.createElement('canvas');
+                canvas.width = renderWidth;
+                canvas.height = renderHeight;
+                const ctx = canvas.getContext('2d');
+                const imgData = ctx.createImageData(renderWidth, renderHeight);
+
+                for (let y = 0; y < renderHeight; y++) {
+                    const srcY = (y / (renderHeight - 1)) * (ny - 1);
+                    const r0 = Math.floor(srcY);
+                    const r1 = Math.min(r0 + 1, ny - 1);
+                    const tY = srcY - r0;
+
+                    for (let x = 0; x < renderWidth; x++) {
+                        let pct = x / (renderWidth - 1);
+                        let lonDeg = isWestern ? (180 + pct * 180) : (pct * 180);
+                        
+                        let srcX = (lonDeg / 360) * (nx - 1);
+                        const c0 = Math.floor(srcX);
+                        const c1 = Math.min(c0 + 1, nx - 1);
+                        const tX = srcX - c0;
+
+                        const p00 = getVectorMagnitude(c0, r0);
+                        const p10 = getVectorMagnitude(c1, r0);
+                        const p01 = getVectorMagnitude(c0, r1);
+                        const p11 = getVectorMagnitude(c1, r1);
+
+                        const topBlend = p00 + tX * (p10 - p00);
+                        const bottomBlend = p01 + tX * (p11 - p01);
+                        const windSpeed = topBlend + tY * (bottomBlend - topBlend);
+
+                        const idx = (y * renderWidth + x) * 4;
+
+                        if (windSpeed > 2.0) {
+                            if (windSpeed <= 5.0) { 
+                                imgData.data[idx + 0] = 20;   imgData.data[idx + 1] = 35; 
+                                imgData.data[idx + 2] = 100;  imgData.data[idx + 3] = 90; 
+                            } else if (windSpeed <= 12.0) { 
+                                imgData.data[idx + 0] = 0;    imgData.data[idx + 1] = 150; 
+                                imgData.data[idx + 2] = 160;  imgData.data[idx + 3] = 130; 
+                            } else if (windSpeed <= 22.0) { 
+                                imgData.data[idx + 0] = 0;    imgData.data[idx + 1] = 180; 
+                                imgData.data[idx + 2] = 60;   imgData.data[idx + 3] = 160; 
+                            } else if (windSpeed <= 34.0) { 
+                                imgData.data[idx + 0] = 230;  imgData.data[idx + 1] = 140; 
+                                imgData.data[idx + 2] = 0;    imgData.data[idx + 3] = 180; 
+                            } else { 
+                                imgData.data[idx + 0] = 180;  imgData.data[idx + 1] = 0; 
+                                imgData.data[idx + 2] = 80;   imgData.data[idx + 3] = 210; 
+                            }
+                        } else {
+                            imgData.data[idx + 3] = 0; 
+                        }
+                    }
+                }
+                ctx.putImageData(imgData, 0, 0);
+
+                ctx.globalCompositeOperation = 'copy';
+                ctx.filter = 'blur(2.5px)';
+                ctx.drawImage(canvas, 0, 0);
+                
+                return canvas.toDataURL();
+            }
+
+            const eastWindData = generateWindHemisphereCanvas(false); 
+            const westWindData = generateWindHemisphereCanvas(true);  
+
+            const eastRect = Cesium.Rectangle.fromDegrees(0, Math.min(la1, la2), 180, Math.max(la1, la2));
+            const westRect = Cesium.Rectangle.fromDegrees(-180, Math.min(la1, la2), 0, Math.max(la1, la2));
+
+            let eastLayer = viewer.imageryLayers.addImageryProvider(
+                new Cesium.SingleTileImageryProvider({ url: eastWindData, rectangle: eastRect })
+            );
+            eastLayer.alpha = 0.55; 
+            activeWindLayers.push(eastLayer);
+
+            let westLayer = viewer.imageryLayers.addImageryProvider(
+                new Cesium.SingleTileImageryProvider({ url: westWindData, rectangle: westRect })
+            );
+            westLayer.alpha = 0.55;
+            activeWindLayers.push(westLayer);
+        }
+
+        // =========================================================================
+        // 7. MULTI-SOURCE 3D PRECIPITATION ROUTER ENGINE
         // =========================================================================
         async function handlePrecipitationPipelines(gfsRainPath) {
             liveRadarBtn.classList.remove('active');
             iconBtn.classList.remove('active');
 
-            // Clear old active layers
             activeRainLayers.forEach(layer => viewer.imageryLayers.remove(layer));
             activeRainLayers = [];
 
@@ -382,7 +552,7 @@
         }
 
         // =========================================================================
-        // 7. GFS FORECAST CONTOURF APCP RENDERER (SPLIT-HEMISPHERE $360^\circ$ ENGINE)
+        // 8. GFS FORECAST CONTOURF APCP RENDERER
         // =========================================================================
         async function renderGfs3DRain(filePath) {
             try {
@@ -396,8 +566,7 @@
                 const nx = header.nx; const ny = header.ny;
                 const la1 = header.la1; const la2 = header.la2;
 
-                // 1. Setup the high-resolution texture canvas structures
-                const renderWidth = 1024; // Width per hemisphere 
+                const renderWidth = 1024; 
                 const renderHeight = 1024;
 
                 function getGridValue(c, r) {
@@ -406,7 +575,6 @@
                     return rainValues[r * nx + c] || 0;
                 }
 
-                // Internal pipeline builder to handle isolated data clipping frames
                 function generateHemisphereCanvas(isWestern) {
                     const canvas = document.createElement('canvas');
                     canvas.width = renderWidth;
@@ -421,7 +589,6 @@
                         const tY = srcY - r0;
 
                         for (let x = 0; x < renderWidth; x++) {
-                            // Map the target canvas back to correct sections of the 0 to 360 array index window
                             let pct = x / (renderWidth - 1);
                             let lonDeg = isWestern ? (180 + pct * 180) : (pct * 180);
                             
@@ -443,17 +610,17 @@
 
                             if (finalValue > 0.1) {
                                 if (finalValue <= 2) { 
-                                    imgData.data[idx + 0] = 0;   imgData.data[idx + 1] = 120; 
-                                    imgData.data[idx + 2] = 255; imgData.data[idx + 3] = 110; 
+                                    imgData.data[idx + 0] = 130;  imgData.data[idx + 1] = 0; 
+                                    imgData.data[idx + 2] = 230;  imgData.data[idx + 3] = 110; 
                                 } else if (finalValue <= 10) { 
-                                    imgData.data[idx + 0] = 0;   imgData.data[idx + 1] = 200; 
-                                    imgData.data[idx + 2] = 100; imgData.data[idx + 3] = 150; 
+                                    imgData.data[idx + 0] = 30;   imgData.data[idx + 1] = 120; 
+                                    imgData.data[idx + 2] = 220;  imgData.data[idx + 3] = 140; 
                                 } else if (finalValue <= 25) { 
-                                    imgData.data[idx + 0] = 255; imgData.data[idx + 1] = 200; 
-                                    imgData.data[idx + 2] = 0;   imgData.data[idx + 3] = 180; 
+                                    imgData.data[idx + 0] = 255;  imgData.data[idx + 1] = 255; 
+                                    imgData.data[idx + 2] = 0;    imgData.data[idx + 3] = 170; 
                                 } else { 
-                                    imgData.data[idx + 0] = 255; imgData.data[idx + 1] = 60; 
-                                    imgData.data[idx + 2] = 0;   imgData.data[idx + 3] = 200; 
+                                    imgData.data[idx + 0] = 255;  imgData.data[idx + 1] = 0; 
+                                    imgData.data[idx + 2] = 0;    imgData.data[idx + 3] = 190; 
                                 }
                             } else {
                                 imgData.data[idx + 3] = 0; 
@@ -462,7 +629,6 @@
                     }
                     ctx.putImageData(imgData, 0, 0);
 
-                    // Smooth visual interpolation styling
                     ctx.globalCompositeOperation = 'copy';
                     ctx.filter = 'blur(1.5px)';
                     ctx.drawImage(canvas, 0, 0);
@@ -470,15 +636,12 @@
                     return canvas.toDataURL();
                 }
 
-                // 2. Generate data textures for both hemispheres
-                const eastImgData = generateHemisphereCanvas(false); // 0 to 180
-                const westImgData = generateHemisphereCanvas(true);  // 180 to 360 (remapped as -180 to 0)
+                const eastImgData = generateHemisphereCanvas(false); 
+                const westImgData = generateHemisphereCanvas(true);  
 
-                // 3. Define clean boundaries that match Cesium's standards
                 const eastRect = Cesium.Rectangle.fromDegrees(0, Math.min(la1, la2), 180, Math.max(la1, la2));
                 const westRect = Cesium.Rectangle.fromDegrees(-180, Math.min(la1, la2), 0, Math.max(la1, la2));
 
-                // 4. Mount both layers simultaneously onto the globe map layer chain
                 let eastLayer = viewer.imageryLayers.addImageryProvider(
                     new Cesium.SingleTileImageryProvider({ url: eastImgData, rectangle: eastRect })
                 );
@@ -497,10 +660,74 @@
         }
 
         // =========================================================================
-        // 8. INTERACTION HANDLERS & TIMELINE EVENTS
+        // 9. DYNAMIC MOUSE HOVER SCREEN-SPACE POPUP CONTROLLER
+        // =========================================================================
+        const mouseHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+        
+        mouseHandler.setInputAction(function(movement) {
+            // Hide popups when dataset is empty OR the user turned off the wind overlay layer
+            if (!currentModelGribDataset || !windLayerActive) {
+                popupHUD.style.display = 'none';
+                return;
+            }
+
+            const raycastPosition = viewer.camera.pickEllipsoid(movement.endPosition, viewer.scene.globe.ellipsoid);
+            if (Cesium.defined(raycastPosition)) {
+                const cartographicCoords = Cesium.Cartographic.fromCartesian(raycastPosition);
+                let lon = Cesium.Math.toDegrees(cartographicCoords.longitude);
+                let lat = Cesium.Math.toDegrees(cartographicCoords.latitude);
+
+                if (lon < 0) lon += 360;
+
+                const header = currentModelGribDataset[0].header;
+                const uData = currentModelGribDataset[0].data;
+                const vData = currentModelGribDataset[1].data;
+
+                if (lon >= header.lo1 && lon <= header.lo2 && lat <= header.la1 && lat >= header.la2) {
+                    const col = Math.floor((lon - header.lo1) / header.dx);
+                    const row = Math.floor((header.la1 - lat) / header.dy);
+                    const arrayIndex = row * header.nx + col;
+
+                    if (arrayIndex >= 0 && arrayIndex < uData.length) {
+                        const u = uData[arrayIndex] || 0;
+                        const v = vData[arrayIndex] || 0;
+                        const velocityMS = Math.sqrt(u * u + v * v);
+                        const velocityKT = velocityMS * 1.94384; 
+
+                        popupHUD.style.left = (movement.endPosition.x + 15) + 'px';
+                        popupHUD.style.top = (movement.endPosition.y + 15) + 'px';
+                        popupHUD.style.display = 'block';
+                        
+                        popupHUD.innerHTML = `
+                            <strong style="color: #00ceff;">📍 Position:</strong> ${lat.toFixed(2)}°, ${lon > 180 ? (lon - 360).toFixed(2) : lon.toFixed(2)}°<br/>
+                            <strong style="color: #00ff88;">💨 Velocity:</strong> ${velocityMS.toFixed(1)} m/s (${velocityKT.toFixed(1)} kt)
+                        `;
+                        return;
+                    }
+                }
+            }
+            popupHUD.style.display = 'none';
+        }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
+
+        // =========================================================================
+        // 10. INTERACTION HANDLERS & TIMELINE EVENTS
         // =========================================================================
         slider.oninput = () => update3DGlobe();
         modelSelect.onchange = () => update3DGlobe();
+
+        // Master toggle switch logic connection
+        windToggleBtn.onclick = function() {
+            windLayerActive = !windLayerActive;
+            if (windLayerActive) {
+                this.innerText = "Wind Overlay: On";
+                this.classList.add('active');
+            } else {
+                this.innerText = "Wind Overlay: Off";
+                this.classList.remove('active');
+                popupHUD.style.display = 'none'; // Clear lingering hover popups
+            }
+            update3DGlobe();
+        };
 
         iconBtn.onclick = function() {
             currentRainLayerType = (currentRainLayerType === 'gfs_rain') ? null : 'gfs_rain';
@@ -548,7 +775,9 @@
             }
         };
 
-        update3DGlobe();
+        setTimeout(() => {
+            update3DGlobe();
+        }, 400);
     </script>
 </body>
 </html>

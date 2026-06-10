@@ -100,7 +100,7 @@ while true; do
         CLEAN_HOUR=$((10#$fhr))
         export CLEAN_HOUR; export fhr
 
-        python3 - <<EOF
+        python3.11 - <<EOF
 import os, sys, json, gzip
 import numpy as np
 from herbie import Herbie

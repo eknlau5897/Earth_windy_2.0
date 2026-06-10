@@ -21,7 +21,7 @@ for ((h=0; h<=120; h+=6)); do FORECAST_HOURS+=($(printf "%03d" "$h")); done
 for ((h=132; h<=240; h+=12)); do FORECAST_HOURS+=($(printf "%03d" "$h")); done
 
 echo "=================================================================="
-echo "   HERBIE TRIPLE-MODEL DAEMON ENGINE (UNIVERSAL PRODUCTION v3)   "
+echo "   HERBIE TRIPLE-MODEL DAEMON ENGINE (GFS | IFS | AIFS) v4"
 echo "=================================================================="
 
 while true; do
@@ -96,17 +96,17 @@ while true; do
     # 2. RUN PY311 PARSER LOOP
     # ==============================================================================
     for fhr in "${FORECAST_HOURS[@]}"; do
-        # Safely treat string integers as base-10 to bypass octal crash and empty string issue
         CLEAN_HOUR=$((10#$fhr))
         export CLEAN_HOUR; export fhr
 
-        python3.11 - <<EOF
+        python3 - <<EOF
 import os, sys, json, gzip
 import numpy as np
 from herbie import Herbie
 
 gfs_date_env = os.environ.get("GFS_DATE")
 ifs_date_env = os.environ.get("IFS_DATE")
+aifs_date_env = os.environ.get("AIFS_DATE")
 clean_hour_env = int(os.environ.get("CLEAN_HOUR", 0))
 fhr_env = os.environ.get("fhr")
 
@@ -116,13 +116,11 @@ def build_json(param, level, ds, u_var, v_var=None, is_pressure_level=False):
         lon_key = 'longitude' if 'longitude' in ds.coords else 'lon'
         lat_key = 'latitude' if 'latitude' in ds.coords else 'lat'
         
-        # Check and resolve alternative variable names for U component
         if u_var not in ds.data_vars:
             alternatives = [u_var.lower(), u_var.upper(), '10u' if u_var in ['u10', 'u'] else '', 'u10' if u_var in ['10u', 'u'] else '']
             for alt in alternatives:
                 if alt and alt in ds.data_vars: u_var = alt; break
                 
-        # Check and resolve alternative variable names for V component
         if v_var and v_var not in ds.data_vars:
             alternatives = [v_var.lower(), v_var.upper(), '10v' if v_var in ['v10', 'v'] else '', 'v10' if v_var in ['10v', 'v'] else '']
             for alt in alternatives:
@@ -131,11 +129,13 @@ def build_json(param, level, ds, u_var, v_var=None, is_pressure_level=False):
         if v_var:
             u_vals = ds[u_var].values; v_vals = ds[v_var].values
             if is_pressure_level:
-                p_coord = next((c for c in ['isobaricInhPa', 'plev', 'level'] if c in ds.coords), None)
+                p_coord = next((c for c in ['isobaricInhPa', 'plev', 'level', 'isobaricInhPa_0'] if c in ds.coords), None)
                 if p_coord:
                     p_array = list(ds[p_coord].values)
                     target = level * 100 if p_coord == 'plev' else level
-                    if target in p_array: idx = p_array.index(target); u_vals = u_vals[idx]; v_vals = v_vals[idx]
+                    if target in p_array: 
+                        idx = p_array.index(target)
+                        u_vals = u_vals[idx]; v_vals = v_vals[idx]
             return [
                 {"header": {"parameterName": "U-component of wind", "surface1Value": level, "nx": len(ds[lon_key]), "ny": len(ds[lat_key]), "lo1": float(ds[lon_key].min()), "la1": float(ds[lat_key].max()), "lo2": float(ds[lon_key].max()), "la2": float(ds[lat_key].min()), "dx": 0.25, "dy": 0.25}, "data": np.where(np.isnan(u_vals), 0, u_vals).flatten().tolist()},
                 {"header": {"parameterName": "V-component of wind", "surface1Value": level, "nx": len(ds[lon_key]), "ny": len(ds[lat_key]), "lo1": float(ds[lon_key].min()), "la1": float(ds[lat_key].max()), "lo2": float(ds[lon_key].max()), "la2": float(ds[lat_key].min()), "dx": 0.25, "dy": 0.25}, "data": np.where(np.isnan(v_vals), 0, v_vals).flatten().tolist()}
@@ -157,28 +157,45 @@ def safe_xarray_fetch(herbie_obj, search_string):
         try: herbie_obj.download(); return herbie_obj.xarray(search_string)
         except: return None
 
-# GFS Extraction Block
+# --- MODEL A: NOAA GFS ARRAYS ---
 try:
     Hg = Herbie(gfs_date_env, model="gfs", product="pgrb2.0p25", fxx=clean_hour_env, verbose=False, overwrite=True)
     save_gzip(build_json("Pressure reduced to MSL", 0, safe_xarray_fetch(Hg, ":PRMSL:mean sea level:"), "prmsl"), f"gfs_mslp_f{fhr_env}.json.gz")
     if clean_hour_env > 0: 
         save_gzip(build_json("Total Precipitation", 0, safe_xarray_fetch(Hg, ":APCP:surface:"), "tp"), f"gfs_rain_f{fhr_env}.json.gz")
     save_gzip(build_json("Wind", 10, safe_xarray_fetch(Hg, ":(U|V)GRD:10 m above ground:"), "u10", "v10"), f"gfs_10m_f{fhr_env}.json.gz")
+    
+    for p in [850, 700, 500, 200]:
+        save_gzip(build_json("Wind", p, safe_xarray_fetch(Hg, f":(U|V)GRD:{p} mb:"), "ugrd", "vgrd", True), f"gfs_{p}_f{fhr_env}.json.gz")
     del Hg
 except Exception as e:
     print(f"⚠️ GFS Fetch failed for hour {fhr_env}: {e}")
 
-# ECMWF IFS Extraction Block
+# --- MODEL B: ECMWF IFS PHYSICAL ARRAYS ---
 try:
     He = Herbie(ifs_date_env, model="ifs", product="oper", source="ecmwf", fxx=clean_hour_env, verbose=False, overwrite=True)
     save_gzip(build_json("Pressure reduced to MSL", 0, safe_xarray_fetch(He, ":msl:"), "msl"), f"ecmwf_mslp_f{fhr_env}.json.gz")
     save_gzip(build_json("Wind", 10, safe_xarray_fetch(He, ":(10u|10v):"), "10u", "10v"), f"ecmwf_10m_f{fhr_env}.json.gz")
+    
+    for p in [850, 700, 500, 200]:
+        save_gzip(build_json("Wind", p, safe_xarray_fetch(He, f":gh:.*:{p}:"), "u", "v", True), f"ecmwf_{p}_f{fhr_env}.json.gz")
     del He
 except Exception as e:
     print(f"⚠️ ECMWF IFS Fetch failed for hour {fhr_env}: {e}")
+
+# --- MODEL C: ECMWF AIFS NEURAL NET ARRAYS ---
+try:
+    Ha = Herbie(aifs_date_env, model="aifs", product="oper", source="ecmwf", fxx=clean_hour_env, verbose=False, overwrite=True)
+    save_gzip(build_json("Pressure reduced to MSL", 0, safe_xarray_fetch(Ha, ":msl:"), "msl"), f"aifs_mslp_f{fhr_env}.json.gz")
+    save_gzip(build_json("Wind", 10, safe_xarray_fetch(Ha, ":(10u|10v):"), "10u", "10v"), f"aifs_10m_f{fhr_env}.json.gz")
+    
+    for p in [850, 700, 500, 200]:
+        save_gzip(build_json("Wind", p, safe_xarray_fetch(Ha, f":(u|v):{p}:"), "u", "v", True), f"aifs_{p}_f{fhr_env}.json.gz")
+    del Ha
+except Exception as e:
+    print(f"⚠️ ECMWF AIFS Fetch failed for hour {fhr_env}: {e}")
 EOF
 
-        # Check Python process exit status safely
         if [ $? -ne 0 ]; then 
             DATA_ERROR_OCCURRED=1
         else
@@ -201,8 +218,6 @@ EOF
         
         git remote remove origin 2>/dev/null || true
         git remote add origin "https://github.com/${githubUser}/${githubRepo}.git"
-        
-        # Completely drop references to keep the git history tiny (Avoids repository bloating)
         git update-ref -d refs/heads/"$BRANCH" 2>/dev/null || true
 
         git add "$(basename "$0")"
@@ -210,14 +225,11 @@ EOF
         if [ -f "./index.html" ]; then git add index.html; fi
 
         git commit -m "complete: cycle ${CYCLE_ID} - ${file_count} files synced"
-        
-        echo "🚀 Force-pushing production assets into GitHub Repository..."
+        echo "🚀 Force-pushing dynamic triple-model layers up to GitHub..."
         git push -u origin "$BRANCH" --force
     fi
 
-    # Wipe residual cache files to protect disk array allocations
     find "$SCRATCH_DIR" -type f ! -name "*.idx" -delete 2>/dev/null
-    
     echo "[Cycle Complete] Sleeping for $((CHECK_INTERVAL / 60)) minutes..."
     sleep "$CHECK_INTERVAL"
 done

@@ -5,7 +5,7 @@ OUTPUT_DIR="./data"
 SCRATCH_DIR="./.tmp_scratch"
 CHECK_INTERVAL=3600 
 
-# GitHub Deployment parameters
+# Define repository variables for the dynamic re-initialization matrix
 BRANCH="main"
 githubUser="eknlau5897"
 githubRepo="Earth_windy_2.0"
@@ -21,7 +21,7 @@ for ((h=0; h<=120; h+=6)); do FORECAST_HOURS+=($(printf "%03d" "$h")); done
 for ((h=132; h<=240; h+=12)); do FORECAST_HOURS+=($(printf "%03d" "$h")); done
 
 echo "=================================================================="
-echo "   HERBIE TRIPLE-MODEL DAEMON ENGINE (GFS | IFS | AIFS) v5"
+echo "   HERBIE TRIPLE-MODEL DAEMON ENGINE (GFS | IFS | AIFS) v6"
 echo "=================================================================="
 
 while true; do
@@ -142,15 +142,22 @@ def build_json(param, level, ds, u_var, v_var=None, is_pressure_level=False):
             if u_var not in ds.data_vars or v_var not in ds.data_vars:
                 raise KeyError(f"Could not find wind variables in dataset. Found: {list(ds.data_vars)}")
                 
-            u_vals = ds[u_var].values; v_vals = ds[v_var].values
+            u_vals = ds[u_var].values
+            v_vals = ds[v_var].values
+            
             if is_pressure_level:
                 p_coord = next((c for c in ['isobaricInhPa', 'plev', 'level', 'isobaricInhPa_0'] if c in ds.coords), None)
                 if p_coord:
-                    p_array = list(ds[p_coord].values)
+                    # Fix: Force 0D scalar arrays to become 1D lists safely
+                    p_array = list(np.atleast_1d(ds[p_coord].values))
                     target = level * 100 if p_coord == 'plev' else level
-                    if target in p_array: 
+                    
+                    # Only slice the values if u_vals/v_vals actually contain a vertical layer dimension
+                    if len(u_vals.shape) > 2 and target in p_array:
                         idx = p_array.index(target)
-                        u_vals = u_vals[idx]; v_vals = v_vals[idx]
+                        u_vals = u_vals[idx]
+                        v_vals = v_vals[idx]
+                        
             return [
                 {"header": {"parameterName": "U-component of wind", "surface1Value": level, "nx": len(ds[lon_key]), "ny": len(ds[lat_key]), "lo1": float(ds[lon_key].min()), "la1": float(ds[lat_key].max()), "lo2": float(ds[lon_key].max()), "la2": float(ds[lat_key].min()), "dx": 0.25, "dy": 0.25}, "data": np.where(np.isnan(u_vals), 0, u_vals).flatten().tolist()},
                 {"header": {"parameterName": "V-component of wind", "surface1Value": level, "nx": len(ds[lon_key]), "ny": len(ds[lat_key]), "lo1": float(ds[lon_key].min()), "la1": float(ds[lat_key].max()), "lo2": float(ds[lon_key].max()), "la2": float(ds[lat_key].min()), "dx": 0.25, "dy": 0.25}, "data": np.where(np.isnan(v_vals), 0, v_vals).flatten().tolist()}

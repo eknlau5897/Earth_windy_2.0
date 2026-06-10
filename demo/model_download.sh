@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail # Fail-fast shell architecture
 
-OUTPUT_DIR="./data"
+OUTPUT_DIR="../data"
 SCRATCH_DIR="./.tmp_scratch"
 CHECK_INTERVAL=3600 
 

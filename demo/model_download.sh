@@ -3,7 +3,7 @@ set -euo pipefail # Fail-fast shell architecture
 
 OUTPUT_DIR="./data"
 SCRATCH_DIR="./.tmp_scratch"
-CHECK_INTERVAL=21600 
+CHECK_INTERVAL=10800 
 
 # Repository structural targets
 BRANCH="main"

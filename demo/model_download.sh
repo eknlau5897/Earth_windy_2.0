@@ -21,7 +21,7 @@ for ((h=0; h<=120; h+=6)); do FORECAST_HOURS+=($(printf "%03d" "$h")); done
 for ((h=132; h<=240; h+=12)); do FORECAST_HOURS+=($(printf "%03d" "$h")); done
 
 echo "=================================================================="
-echo "   HERBIE TRIPLE-MODEL DAEMON ENGINE (PATCHED PRODUCTION v2)     "
+echo "   HERBIE TRIPLE-MODEL DAEMON ENGINE (UNIVERSAL PRODUCTION v3)   "
 echo "=================================================================="
 
 while true; do
@@ -32,7 +32,7 @@ while true; do
     FILE_DATE=$(date -u +"%Y%m%d")
 
     # ==============================================================================
-    # 1. MODEL RUN DETERMINATION PLUMBING (FIXED FOR LINUX ENGINE RUNNERS)
+    # 1. MODEL RUN DETERMINATION PLUMBING (UNIVERSAL MAC/LINUX COMPATIBLE)
     # ==============================================================================
     if date -u -d "yesterday" +"%Y-%m-%d" >/dev/null 2>&1; then
         # GNU Linux Environment
@@ -81,15 +81,26 @@ while true; do
 
     export GFS_DATE; export IFS_DATE; export AIFS_DATE
 
+    CYCLE_ID="${FILE_DATE}_gfs${GFS_CYCLE}_ifs${IFS_CYCLE}_aifs${AIFS_CYCLE}"
+    success_lockfile="$OUTPUT_DIR/.success_${CYCLE_ID}"
+
+    if [ -f "$success_lockfile" ]; then
+        echo "[Daemon Track] Cycle configuration ${CYCLE_ID} processed. Idling..."
+        sleep "$CHECK_INTERVAL"
+        continue
+    fi
+    
+    DATA_ERROR_OCCURRED=0
+
     # ==============================================================================
     # 2. RUN PY311 PARSER LOOP
     # ==============================================================================
     for fhr in "${FORECAST_HOURS[@]}"; do
-        # Fixed: Safely treat string integers as base-10 to bypass octal crash and empty string issue
+        # Safely treat string integers as base-10 to bypass octal crash and empty string issue
         CLEAN_HOUR=$((10#$fhr))
         export CLEAN_HOUR; export fhr
 
-        python3.11 - <<EOF
+        python3 - <<EOF
 import os, sys, json, gzip
 import numpy as np
 from herbie import Herbie
@@ -104,10 +115,19 @@ def build_json(param, level, ds, u_var, v_var=None, is_pressure_level=False):
     try:
         lon_key = 'longitude' if 'longitude' in ds.coords else 'lon'
         lat_key = 'latitude' if 'latitude' in ds.coords else 'lat'
+        
+        # Check and resolve alternative variable names for U component
         if u_var not in ds.data_vars:
             alternatives = [u_var.lower(), u_var.upper(), '10u' if u_var in ['u10', 'u'] else '', 'u10' if u_var in ['10u', 'u'] else '']
             for alt in alternatives:
                 if alt and alt in ds.data_vars: u_var = alt; break
+                
+        # Check and resolve alternative variable names for V component
+        if v_var and v_var not in ds.data_vars:
+            alternatives = [v_var.lower(), v_var.upper(), '10v' if v_var in ['v10', 'v'] else '', 'v10' if v_var in ['10v', 'v'] else '']
+            for alt in alternatives:
+                if alt and alt in ds.data_vars: v_var = alt; break
+
         if v_var:
             u_vals = ds[u_var].values; v_vals = ds[v_var].values
             if is_pressure_level:
@@ -129,8 +149,7 @@ def build_json(param, level, ds, u_var, v_var=None, is_pressure_level=False):
 
 def save_gzip(data, filename):
     if data is None: return
-    with gzip.open(os.path.join("${SCRATCH_DIR}", filename), "wt", encoding="utf-8") as f: 
-        json.dump(data, f)
+    with gzip.open(os.path.join("${SCRATCH_DIR}", filename), "wt", encoding="utf-8") as f: json.dump(data, f)
 
 def safe_xarray_fetch(herbie_obj, search_string):
     try: return herbie_obj.xarray(search_string)
@@ -145,18 +164,18 @@ try:
     if clean_hour_env > 0: 
         save_gzip(build_json("Total Precipitation", 0, safe_xarray_fetch(Hg, ":APCP:surface:"), "tp"), f"gfs_rain_f{fhr_env}.json.gz")
     save_gzip(build_json("Wind", 10, safe_xarray_fetch(Hg, ":(U|V)GRD:10 m above ground:"), "u10", "v10"), f"gfs_10m_f{fhr_env}.json.gz")
-    Hg.remove()
+    del Hg
 except Exception as e:
-    print(f"⚠️ GFS Fetch failed: {e}")
+    print(f"⚠️ GFS Fetch failed for hour {fhr_env}: {e}")
 
 # ECMWF IFS Extraction Block
 try:
     He = Herbie(ifs_date_env, model="ifs", product="oper", source="ecmwf", fxx=clean_hour_env, verbose=False, overwrite=True)
     save_gzip(build_json("Pressure reduced to MSL", 0, safe_xarray_fetch(He, ":msl:"), "msl"), f"ecmwf_mslp_f{fhr_env}.json.gz")
     save_gzip(build_json("Wind", 10, safe_xarray_fetch(He, ":(10u|10v):"), "10u", "10v"), f"ecmwf_10m_f{fhr_env}.json.gz")
-    He.remove()
+    del He
 except Exception as e:
-    print(f"⚠️ ECMWF IFS Fetch failed: {e}")
+    print(f"⚠️ ECMWF IFS Fetch failed for hour {fhr_env}: {e}")
 EOF
 
         # Check Python process exit status safely

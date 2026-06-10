@@ -270,11 +270,6 @@ EOF
         git init
         git checkout -b "$BRANCH"
         git remote add origin "https://github.com/${githubUser}/${githubRepo}.git"
-        
-        # 3. RE-BIND LFS MECHANISM CORRRECTLY
-        git lfs install --local
-        git lfs track "./data/*.json.gz"
-        git add .gitattributes
 
         # 4. Stage your foundational project code alongside datasets
         git add "$SCRIPT_NAME"

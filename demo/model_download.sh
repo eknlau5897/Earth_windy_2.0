@@ -5,7 +5,7 @@ OUTPUT_DIR="./data"
 SCRATCH_DIR="./.tmp_scratch"
 CHECK_INTERVAL=3600 
 
-# Define repository variables for the dynamic re-initialization matrix
+# Repository structural targets
 BRANCH="main"
 githubUser="eknlau5897"
 githubRepo="Earth_windy_2.0"
@@ -21,7 +21,7 @@ for ((h=0; h<=120; h+=6)); do FORECAST_HOURS+=($(printf "%03d" "$h")); done
 for ((h=132; h<=240; h+=12)); do FORECAST_HOURS+=($(printf "%03d" "$h")); done
 
 echo "=================================================================="
-echo "   HERBIE TRIPLE-MODEL DAEMON ENGINE (GFS | IFS | AIFS) v6"
+echo "   HERBIE TRIPLE-MODEL DAEMON ENGINE (GFS | IFS | AIFS) v7"
 echo "=================================================================="
 
 while true; do
@@ -148,11 +148,10 @@ def build_json(param, level, ds, u_var, v_var=None, is_pressure_level=False):
             if is_pressure_level:
                 p_coord = next((c for c in ['isobaricInhPa', 'plev', 'level', 'isobaricInhPa_0'] if c in ds.coords), None)
                 if p_coord:
-                    # Fix: Force 0D scalar arrays to become 1D lists safely
+                    # Fix scalar/0D dimension mapping conversion
                     p_array = list(np.atleast_1d(ds[p_coord].values))
                     target = level * 100 if p_coord == 'plev' else level
                     
-                    # Only slice the values if u_vals/v_vals actually contain a vertical layer dimension
                     if len(u_vals.shape) > 2 and target in p_array:
                         idx = p_array.index(target)
                         u_vals = u_vals[idx]
@@ -199,10 +198,11 @@ except Exception as e:
 try:
     He = Herbie(ifs_date_env, model="ifs", product="oper", source="ecmwf", fxx=clean_hour_env, verbose=False, overwrite=True)
     save_gzip(build_json("Pressure reduced to MSL", 0, safe_xarray_fetch(He, ":msl:"), "msl"), f"ecmwf_mslp_f{fhr_env}.json.gz")
-    save_gzip(build_json("Wind", 10, safe_xarray_fetch(He, ":(10u|10v):"), "10u", "10v"), f"ecmwf_10m_f{fhr_env}.json.gz")
+    save_gzip(build_json("Wind", 10, safe_xarray_fetch(He, ":10(u|v):"), "10u", "10v"), f"ecmwf_10m_f{fhr_env}.json.gz")
     
     for p in [850, 700, 500, 200]:
-        save_gzip(build_json("Wind", p, safe_xarray_fetch(He, f":gh:.*:{p}:"), "u", "v", True), f"ecmwf_{p}_f{fhr_env}.json.gz")
+        # Fix: Pull directly matching ECMWF wind tokens avoiding Geopotential groupings
+        save_gzip(build_json("Wind", p, safe_xarray_fetch(He, f":(u|v):{p}:"), "u", "v", True), f"ecmwf_{p}_f{fhr_env}.json.gz")
     del He
 except Exception as e:
     print(f"⚠️ ECMWF IFS Fetch failed for hour {fhr_env}: {e}")
@@ -211,7 +211,7 @@ except Exception as e:
 try:
     Ha = Herbie(aifs_date_env, model="aifs", product="oper", source="ecmwf", fxx=clean_hour_env, verbose=False, overwrite=True)
     save_gzip(build_json("Pressure reduced to MSL", 0, safe_xarray_fetch(Ha, ":msl:"), "msl"), f"aifs_mslp_f{fhr_env}.json.gz")
-    save_gzip(build_json("Wind", 10, safe_xarray_fetch(Ha, ":(10u|10v):"), "10u", "10v"), f"aifs_10m_f{fhr_env}.json.gz")
+    save_gzip(build_json("Wind", 10, safe_xarray_fetch(Ha, ":10(u|v):"), "10u", "10v"), f"aifs_10m_f{fhr_env}.json.gz")
     
     for p in [850, 700, 500, 200]:
         save_gzip(build_json("Wind", p, safe_xarray_fetch(Ha, f":(u|v):{p}:"), "u", "v", True), f"aifs_{p}_f{fhr_env}.json.gz")

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>地球風場3D</title>
+    <title>地球風場3D - Professional Weather Engine</title>
     <script src="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Cesium.js"></script>
     <link href="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
@@ -69,7 +69,7 @@
     </div>
 
     <div class="toggle-container">
-        <label><input type="checkbox" id="showCoastlines" checked onchange="updateWeatherLayers()"> WebGL-Wind Coastlines (White)</label>
+        <label><input type="checkbox" id="showCoastlines" checked onchange="updateWeatherLayers()"> WebGL-Wind Coastlines (Silver)</label>
         <label><input type="checkbox" id="showWindSpeed" onchange="updateWeatherLayers()"> NCAR Wind Speed Heatmap (0-120kt)</label>
         <label><input type="checkbox" id="showWindArrows" checked onchange="updateWeatherLayers()"> Large Movable Wind Arrows</label>
         <label><input type="checkbox" id="showIsobars" checked onchange="updateWeatherLayers()"> Pressure Isobars</label>
@@ -84,6 +84,7 @@
 <div id="cesiumContainer"></div>
 
 <script>
+    // Initialize Cesium Sandbox Viewer Setup
     const viewer = new Cesium.Viewer('cesiumContainer', {
         imageryProvider: false, baseLayerPicker: false, geocoder: false, homeButton: true,
         infoBox: false, navigationHelpButton: false, sceneModePicker: true, timeline: false, animation: false
@@ -93,11 +94,16 @@
     for (let h = 0; h <= 120; h += 6) { forecastHours.push(String(h).padStart(3, '0')); }
     for (let h = 132; h <= 240; h += 12) { forecastHours.push(String(h).padStart(3, '0')); }
 
+    // Synchronize Range Input Slider Limits dynamically to prevent boundary errors
+    const sliderInput = document.getElementById('timeSlider');
+    sliderInput.min = "0";
+    sliderInput.max = String(forecastHours.length - 1);
+
     let currentBaseLayer = null, h9SatelliteLayer = null, liveRadarLayer = null;
     let velocityTextureLayer = null, precipTextureLayer = null, combinedOutputLayer = null, arrowTextureLayer = null; 
     let activeDataset = null, activePrecipDataset = null;
     let webglWindCoastlineGeoJSON = null;
-    let currentUpdateToken = 0; // Async race condition safety control tracking variable
+    let currentUpdateToken = 0; 
 
     const githubUser = "eknlau5897"; 
     const githubRepo = "Earth_windy_2.0";
@@ -121,45 +127,32 @@
         let runYear = utcFullYear, runMonth = utcMonth, runDay = utcDate, runHour = 0;
 
         if (modelType === 'ecmwf' || modelType === 'aifs') {
-            if (utcHours >= 22) {
-                runHour = 12;
-            } else if (utcHours >= 10) {
-                runHour = 0;
-            } else {
+            if (utcHours >= 22) { runHour = 12; } 
+            else if (utcHours >= 10) { runHour = 0; } 
+            else {
                 const yesterday = new Date(Date.UTC(utcFullYear, utcMonth, utcDate - 1));
-                runYear = yesterday.getUTCFullYear();
-                runMonth = yesterday.getUTCMonth();
-                runDay = yesterday.getUTCDate();
+                runYear = yesterday.getUTCFullYear(); runMonth = yesterday.getUTCMonth(); runDay = yesterday.getUTCDate();
                 runHour = 12;
             }
         } else if (modelType === 'gfs') {
-            if (utcHours >= 19) {
-                runHour = 12; 
-            } else if (utcHours >= 13) {
-                runHour = 6;  
-            } else if (utcHours >= 7) {
-                runHour = 0;  
-            } else if (utcHours >= 1) {
+            if (utcHours >= 19) { runHour = 12; } 
+            else if (utcHours >= 13) { runHour = 6; } 
+            else if (utcHours >= 7) { runHour = 0; } 
+            else if (utcHours >= 1) {
                 const yesterday = new Date(Date.UTC(utcFullYear, utcMonth, utcDate - 1));
-                runYear = yesterday.getUTCFullYear();
-                runMonth = yesterday.getUTCMonth();
-                runDay = yesterday.getUTCDate();
+                runYear = yesterday.getUTCFullYear(); runMonth = yesterday.getUTCMonth(); runDay = yesterday.getUTCDate();
                 runHour = 18;
             } else {
                 const yesterday = new Date(Date.UTC(utcFullYear, utcMonth, utcDate - 1));
-                runYear = yesterday.getUTCFullYear();
-                runMonth = yesterday.getUTCMonth();
-                runDay = yesterday.getUTCDate();
+                runYear = yesterday.getUTCFullYear(); runMonth = yesterday.getUTCMonth(); runDay = yesterday.getUTCDate();
                 runHour = 12;
             }
         }
-
         return new Date(Date.UTC(runYear, runMonth, runDay, runHour, 0, 0));
     }
 
     function updateValidTimeDisplay(modelType, addedHours) {
         const baseTime = calculateOperationalBaseTime(modelType);
-        
         const runYearStr = baseTime.getUTCFullYear();
         const runMonthStr = String(baseTime.getUTCMonth() + 1).padStart(2, '0');
         const runDayStr = String(baseTime.getUTCDate()).padStart(2, '0');
@@ -168,15 +161,10 @@
         const formattedDisplay = `${runYearStr}-${runMonthStr}-${runDayStr} ${runHourStr}Z +${addedHours}hr`;
         document.getElementById('validTimeVal').innerText = `Run: ${formattedDisplay}`;
         
-        return {
-            filenamePrefix: `${runYearStr}${runMonthStr}${runDayStr}`,
-            runHour: runHourStr
-        };
+        return { filenamePrefix: `${runYearStr}${runMonthStr}${runDayStr}`, runHour: runHourStr };
     }
 
-    function handleModelChange() {
-        updateWeatherLayers();
-    }
+    function handleModelChange() { updateWeatherLayers(); }
 
     function changeBasemap(type) {
         if (currentBaseLayer) { viewer.imageryLayers.remove(currentBaseLayer); }
@@ -192,31 +180,28 @@
                 webglWindCoastlineGeoJSON = data;
                 updateWeatherLayers(); 
             })
-            .catch(err => console.error("Failed to fetch cloudfront geojson:", err));
+            .catch(err => console.error("Failed to fetch Natural Earth coastlines:", err));
     }
 
     function drawWebGLWindCoastlines(ctx, width, height, header) {
         if (!document.getElementById('showCoastlines').checked || !webglWindCoastlineGeoJSON) return;
 
         ctx.save();
-        ctx.lineWidth = 1.5;
+        ctx.lineWidth = 1.2;
         ctx.lineJoin = 'round';
         ctx.lineCap = 'round';
-        ctx.strokeStyle = 'red'; 
+        ctx.strokeStyle = 'rgba(240, 240, 245, 0.45)'; // Sleek translucent tint
 
         const { lo1, la1, lo2, la2 } = header;
-        const lonRange = lo2 - lo1;
-        const latRange = la1 - la2;
+        const lonRange = lo2 - lo1; const latRange = la1 - la2;
 
         for (let i = 0; i < webglWindCoastlineGeoJSON.features.length; i++) {
             const line = webglWindCoastlineGeoJSON.features[i].geometry.coordinates;
-            let firstPoint = true;
-            let lastX = null;
+            let firstPoint = true; let lastX = null;
 
             ctx.beginPath();
             for (let j = 0; j < line.length; j++) {
-                let lon = line[j][0];
-                let lat = line[j][1];
+                let lon = line[j][0]; let lat = line[j][1];
 
                 if (lo1 >= 0 && lon < 0) lon += 360;
                 if (lo1 < 0 && lon > 180) lon -= 360;
@@ -227,12 +212,8 @@
                 if (!firstPoint && lastX !== null && Math.abs(x - lastX) > width * 0.5) {
                     ctx.moveTo(x, y); 
                 } else {
-                    if (firstPoint) {
-                        ctx.moveTo(x, y);
-                        firstPoint = false;
-                    } else {
-                        ctx.lineTo(x, y);
-                    }
+                    if (firstPoint) { ctx.moveTo(x, y); firstPoint = false; } 
+                    else { ctx.lineTo(x, y); }
                 }
                 lastX = x;
             }
@@ -251,14 +232,13 @@
                 if (data && data.radar && data.radar.past.length > 0) {
                     const latestPastFrame = data.radar.past[data.radar.past.length - 1];
                     const radarTileUrl = `${data.host}${latestPastFrame.path}/256/{z}/{x}/{y}/2/1_1.png`;
-
                     liveRadarLayer = viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
                         url: radarTileUrl, maximumLevel: 7
                     }));
                     enforceLayerOrdering();
                 }
             })
-            .catch(err => console.error("Error loading RainViewer infrastructure data:", err));
+            .catch(err => console.error("Error loading RainViewer feed:", err));
     }
 
     function toggleH9Satellite(isVisible) {
@@ -267,7 +247,6 @@
 
         const dateObj = new Date();
         dateObj.setHours(dateObj.getHours() - 2); 
-        
         const isoString = dateObj.toISOString(); 
         const ymd = isoString.split('T')[0];
         const hours = String(dateObj.getUTCHours()).padStart(2, '0');
@@ -275,11 +254,9 @@
         const timeString = `${hours}:${minutes}:00`;
 
         const gibsUrl = `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/Himawari9_AHI_Clean_Infrared_Band13/default/${ymd}T${timeString}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.png`;
-
         h9SatelliteLayer = viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
             url: gibsUrl, maximumLevel: 9
         }));
-        
         enforceLayerOrdering();
     }
 
@@ -300,10 +277,8 @@
     }
 
     function updateWeatherLayers() {
-        // Increment the current execution sequence identifier token
         const localToken = ++currentUpdateToken;
 
-        // Instant forced removal from the live canvas loop stack to stop overlaps
         if (velocityTextureLayer) { viewer.imageryLayers.remove(velocityTextureLayer); velocityTextureLayer = null; }
         if (precipTextureLayer) { viewer.imageryLayers.remove(precipTextureLayer); precipTextureLayer = null; }
         if (combinedOutputLayer) { viewer.imageryLayers.remove(combinedOutputLayer); combinedOutputLayer = null; }
@@ -325,36 +300,33 @@
 
         updateValidTimeDisplay(model, targetHour);
 
-        // Fetch Pipeline 1: Wind Field Metrics
         if (activeWindSpeed || activeWindArrows || document.getElementById('showCoastlines').checked) {
             fetch(`${cdnBase}/${model}_${level}_f${targetHour}.json.gz`)
                 .then(res => { if(!res.ok) throw new Error(); return res.arrayBuffer(); })
                 .then(buf => {
-                    if (localToken !== currentUpdateToken) return; // Drop loading completely if outdated
+                    if (localToken !== currentUpdateToken) return;
                     activeDataset = JSON.parse(pako.inflate(new Uint8Array(buf), { to: 'string' }));
                     renderVelocityCanvasStack(activeDataset, activeWindSpeed, activeWindArrows);
-                }).catch(err => console.log("Wind load task dropped or unavailable"));
+                }).catch(err => {});
         }
 
-        // Fetch Pipeline 2: Rain Accumulation
         if (activePrecip) {
             fetch(`${cdnBase}/${model}_rain_f${targetHour}.json.gz`)
                 .then(res => { if(!res.ok) throw new Error(); return res.arrayBuffer(); })
                 .then(buf => {
-                    if (localToken !== currentUpdateToken) return; // Drop loading completely if outdated
+                    if (localToken !== currentUpdateToken) return;
                     activePrecipDataset = JSON.parse(pako.inflate(new Uint8Array(buf), { to: 'string' }));
                     renderPrecipitationTexture(activePrecipDataset);
-                }).catch(err => console.log("Precip load task dropped or unavailable"));
+                }).catch(err => {});
         }
 
-        // Fetch Pipeline 3: MSLP Isobars
         if (activeIsobars) {
             fetch(`${cdnBase}/${model}_mslp_f${targetHour}.json.gz`)
                 .then(res => { if(!res.ok) throw new Error(); return res.arrayBuffer(); })
                 .then(buf => {
-                    if (localToken !== currentUpdateToken) return; // Drop loading completely if outdated
+                    if (localToken !== currentUpdateToken) return;
                     renderIsobarContours(JSON.parse(pako.inflate(new Uint8Array(buf), { to: 'string' })));
-                }).catch(err => console.log("Pressure load task dropped or unavailable"));
+                }).catch(err => {});
         }
     }
 
@@ -377,8 +349,7 @@
 
     function renderVelocityCanvasStack(jsonData, drawHeatmap, drawArrows) {
         const uData = jsonData[0].data; const vData = jsonData[1].data;
-        const header = jsonData[0].header;
-        const { nx, ny, lo1, la1, lo2, la2 } = header;
+        const header = jsonData[0].header; const { nx, ny, lo1, la1, lo2, la2 } = header;
 
         const canvas = document.createElement('canvas'); canvas.width = nx; canvas.height = ny;
         const ctx = canvas.getContext('2d');
@@ -389,119 +360,80 @@
                 const canvasIdx = idx * 4;
                 const speed = Math.sqrt(uData[idx]*uData[idx] + vData[idx]*vData[idx]);
                 const color = getNCARColor(speed);
-
                 if (color) {
-                    imgData.data[canvasIdx]     = color[0];                    
-                    imgData.data[canvasIdx + 1] = color[1]; 
-                    imgData.data[canvasIdx + 2] = color[2];            
-                    imgData.data[canvasIdx + 3] = color[3];                    
+                    imgData.data[canvasIdx]     = color[0]; imgData.data[canvasIdx + 1] = color[1]; 
+                    imgData.data[canvasIdx + 2] = color[2]; imgData.data[canvasIdx + 3] = color[3];                    
                 }
             }
             ctx.putImageData(imgData, 0, 0);
         }
 
         drawWebGLWindCoastlines(ctx, nx, ny, header);
-
         let w = lo1 > 180 ? lo1 - 360 : lo1; let e = lo2 > 180 ? lo2 - 360 : lo2; if (e <= w) e += 360;
 
         velocityTextureLayer = viewer.imageryLayers.addImageryProvider(new Cesium.SingleTileImageryProvider({
             url: canvas.toDataURL(), rectangle: Cesium.Rectangle.fromDegrees(w, la2, e, la1)
         }));
 
-        if (drawArrows) {
-            renderWindVectorArrows(jsonData);
-        }
+        if (drawArrows) { renderWindVectorArrows(jsonData); }
         enforceLayerOrdering();
     }
 
     function renderWindVectorArrows(jsonData) {
         const uData = jsonData[0].data; const vData = jsonData[1].data;
-        const header = jsonData[0].header;
-        const { nx, ny, lo1, la1, lo2, la2 } = header;
+        const header = jsonData[0].header; const { nx, ny, lo1, la1, lo2, la2 } = header;
 
-        const canvas = document.createElement('canvas');
-        canvas.width = 3072;  
-        canvas.height = 1536;
-        const ctx = canvas.getContext('2d');
-
-        const arrowSpacing = 24; 
-        const scaleX = canvas.width / nx;
-        const scaleY = canvas.height / ny;
-
+        const canvas = document.createElement('canvas'); canvas.width = 3072; canvas.height = 1536;
+        const ctx = canvas.getContext('2d'); const arrowSpacing = 24; 
+        const scaleX = canvas.width / nx; const scaleY = canvas.height / ny;
         ctx.lineWidth = 1.6;
 
         for (let y = arrowSpacing / 2; y < canvas.height; y += arrowSpacing) {
             for (let x = arrowSpacing / 2; x < canvas.width; x += arrowSpacing) {
-                const gridX = Math.floor(x / scaleX);
-                const gridY = Math.floor(y / scaleY);
+                const gridX = Math.floor(x / scaleX); const gridY = Math.floor(y / scaleY);
                 const idx = gridY * nx + gridX;
 
                 if (idx >= 0 && idx < uData.length) {
-                    const u = uData[idx];
-                    const v = vData[idx];
+                    const u = uData[idx]; const v = vData[idx];
                     const speed = Math.sqrt(u * u + v * v);
 
                     if (speed > 1.0) { 
                         const angle = Math.atan2(-v, u); 
                         const arrowLength = Math.max(10, Math.min(22, speed * 0.6));
+                        ctx.save(); ctx.translate(x, y); ctx.rotate(angle);
 
-                        ctx.save();
-                        ctx.translate(x, y);
-                        ctx.rotate(angle);
-
-                        const knots = speed / 0.514444;
-                        let targetArrowColor = "#ffffff";
-
-                        if (knots < 22) {
-                            targetArrowColor = "#ffffff";
-                        } else if (knots <= 33) {
-                            targetArrowColor = "#8e8e93";
-                        } else if (knots <= 47) {
-                            targetArrowColor = "#30d158";
-                        } else if (knots <= 63) {
-                            targetArrowColor = "#0a84ff";
-                        } else if (knots <= 82) {
-                            targetArrowColor = "#ffd60a";
-                        } else if (knots <= 95) {
-                            targetArrowColor = "#ff9f0a";
-                        } else if (knots <= 112) {
-                            targetArrowColor = "#ff453a";
-                        } else {
-                            targetArrowColor = "#000000";
-                        }
+                        const knots = speed / 0.514444; let targetArrowColor = "#ffffff";
+                        if (knots < 22) targetArrowColor = "#ffffff";
+                        else if (knots <= 33) targetArrowColor = "#8e8e93";
+                        else if (knots <= 47) targetArrowColor = "#30d158";
+                        else if (knots <= 63) targetArrowColor = "#0a84ff";
+                        else if (knots <= 82) targetArrowColor = "#ffd60a";
+                        else if (knots <= 95) targetArrowColor = "#ff9f0a";
+                        else if (knots <= 112) targetArrowColor = "#ff453a";
+                        else targetArrowColor = "#b30000";
 
                         ctx.strokeStyle = targetArrowColor;
-
-                        ctx.beginPath();
-                        ctx.moveTo(-arrowLength / 2, 0);
-                        ctx.lineTo(arrowLength / 2, 0);
-                        ctx.stroke();
+                        ctx.beginPath(); ctx.moveTo(-arrowLength / 2, 0); ctx.lineTo(arrowLength / 2, 0); ctx.stroke();
 
                         const headSize = arrowLength * 0.35;
-                        ctx.beginPath();
-                        ctx.moveTo(arrowLength / 2, 0);
+                        ctx.beginPath(); ctx.moveTo(arrowLength / 2, 0);
                         ctx.lineTo(arrowLength / 2 - headSize, -headSize * 0.5);
                         ctx.moveTo(arrowLength / 2, 0);
                         ctx.lineTo(arrowLength / 2 - headSize, headSize * 0.5);
                         ctx.stroke();
-
                         ctx.restore();
                     }
                 }
             }
         }
-
         let w = lo1 > 180 ? lo1 - 360 : lo1; let e = lo2 > 180 ? lo2 - 360 : lo2; if (e <= w) e += 360;
-
         arrowTextureLayer = viewer.imageryLayers.addImageryProvider(new Cesium.SingleTileImageryProvider({
             url: canvas.toDataURL(), rectangle: Cesium.Rectangle.fromDegrees(w, la2, e, la1)
         }));
     }
 
     function renderPrecipitationTexture(jsonData) {
-        const { data, header } = jsonData;
-        const { nx, ny, lo1, la1, lo2, la2 } = header;
-
+        const { data, header } = jsonData; const { nx, ny, lo1, la1, lo2, la2 } = header;
         const canvas = document.createElement('canvas'); canvas.width = nx; canvas.height = ny;
         const ctx = canvas.getContext('2d'); const imgData = ctx.createImageData(nx, ny);
 
@@ -509,13 +441,9 @@
             const val = data[idx];
             if (val > 0.1) {
                 const canvasIdx = idx * 4;
-                if (val < 10) { 
-                    imgData.data[canvasIdx+1] = 180; imgData.data[canvasIdx+2] = 255; imgData.data[canvasIdx+3] = 120;
-                } else if (val < 30) { 
-                    imgData.data[canvasIdx] = 255; imgData.data[canvasIdx+1] = 200; imgData.data[canvasIdx+3] = 170;
-                } else { 
-                    imgData.data[canvasIdx] = 255; imgData.data[canvasIdx+3] = 220;
-                }
+                if (val < 10) { imgData.data[canvasIdx+1] = 180; imgData.data[canvasIdx+2] = 255; imgData.data[canvasIdx+3] = 120; } 
+                else if (val < 30) { imgData.data[canvasIdx] = 255; imgData.data[canvasIdx+1] = 200; imgData.data[canvasIdx+3] = 170; } 
+                else { imgData.data[canvasIdx] = 255; imgData.data[canvasIdx+3] = 220; }
             }
         }
         ctx.putImageData(imgData, 0, 0);
@@ -528,26 +456,20 @@
     }
 
     function renderIsobarContours(jsonData) {
-        const { data, header } = jsonData; 
-        const { nx, ny, lo1, la1, dx, dy } = header;
-
-        const canvas = document.createElement('canvas'); 
-        canvas.width = 4096; 
-        canvas.height = 2048;
-        const ctx = canvas.getContext('2d'); 
+        const { data, header } = jsonData; const { nx, ny, lo1, la1, dx, dy } = header;
+        const canvas = document.createElement('canvas'); canvas.width = 4096; canvas.height = 2048;
+        const ctx = canvas.getContext('2d');
         
-        ctx.lineWidth = 1.8; 
-        ctx.lineJoin = 'round';
-        ctx.textBaseline = 'middle';
-        ctx.textAlign = 'center';
+        ctx.lineWidth = 1.8; ctx.lineJoin = 'round';
+        ctx.textBaseline = 'middle'; ctx.textAlign = 'center';
 
-        const isobarIntervals = []; 
+        const isobarIntervals = [];
         for (let p = 96000; p <= 104000; p += 400) { isobarIntervals.push(p); }
 
         isobarIntervals.forEach(targetIso => {
             const valString = String(Math.round(targetIso / 100));
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.65)';
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
             ctx.font = 'bold 18px monospace';
 
             for (let y = 0; y < ny - 1; y++) {
@@ -556,27 +478,17 @@
                     const points = getCellIntersections(x, y, data[i], data[i + 1], data[i + nx], data[i + nx + 1], targetIso);
                     
                     if (points.length >= 2) {
-                        const x1 = (points[0].x / nx) * canvas.width;
-                        const y1 = (points[0].y / ny) * canvas.height;
-                        const x2 = (points[1].x / nx) * canvas.width;
-                        const y2 = (points[1].y / ny) * canvas.height;
+                        const x1 = (points[0].x / nx) * canvas.width; const y1 = (points[0].y / ny) * canvas.height;
+                        const x2 = (points[1].x / nx) * canvas.width; const y2 = (points[1].y / ny) * canvas.height;
 
                         if (x % 36 === 0 && y % 36 === 0) {
                             let angle = Math.atan2(y2 - y1, x2 - x1);
                             if (angle > Math.PI / 2 || angle < -Math.PI / 2) { angle += Math.PI; }
-                            
-                            ctx.save();
-                            ctx.translate(x1, y1);
-                            ctx.rotate(angle);
-                            ctx.shadowColor = 'black';
-                            ctx.shadowBlur = 4;
-                            ctx.fillText(valString, 0, 0);
-                            ctx.restore();
+                            ctx.save(); ctx.translate(x1, y1); ctx.rotate(angle);
+                            ctx.shadowColor = 'black'; ctx.shadowBlur = 4;
+                            ctx.fillText(valString, 0, 0); ctx.restore();
                         } else {
-                            ctx.beginPath();
-                            ctx.moveTo(x1, y1);
-                            ctx.lineTo(x2, y2);
-                            ctx.stroke();
+                            ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
                         }
                     }
                 }
@@ -584,14 +496,11 @@
         });
 
         let w = lo1 > 180 ? lo1 - 360 : lo1; 
-        let e = (lo1 + (nx * dx)) > 180 ? (lo1 + (nx * dx)) - 360 : (lo1 + (nx * dx)); 
-        if (e <= w) e += 360;
+        let e = (lo1 + (nx * dx)) > 180 ? (lo1 + (nx * dx)) - 360 : (lo1 + (nx * dx)); if (e <= w) e += 360;
 
         combinedOutputLayer = viewer.imageryLayers.addImageryProvider(new Cesium.SingleTileImageryProvider({
-            url: canvas.toDataURL(), 
-            rectangle: Cesium.Rectangle.fromDegrees(w, la1 - (ny * dy), e, la1)
+            url: canvas.toDataURL(), rectangle: Cesium.Rectangle.fromDegrees(w, la1 - (ny * dy), e, la1)
         }));
-        
         enforceLayerOrdering();
     }
 
@@ -604,6 +513,7 @@
         return pts;
     }
 
+    // Interactive Hover Tracking Engine Logic
     const mouseHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
     mouseHandler.setInputAction(function(movement) {
         if (!activeDataset && !activePrecipDataset) { trackingLabel.style.display = 'none'; return; }
@@ -627,8 +537,7 @@
 
                 if (activeDataset && gridIdx < activeDataset[0].data.length) {
                     const u = activeDataset[0].data[gridIdx]; const v = activeDataset[1].data[gridIdx];
-                    const speedms = Math.sqrt(u*u + v*v);
-                    const speedKnots = speedms / 0.514444;
+                    const speedms = Math.sqrt(u*u + v*v); const speedKnots = speedms / 0.514444;
                     labelHTML += `<hr style="border:0; border-top:1px solid rgba(255,255,255,0.1); margin:4px 0;">
                                   <strong>💨 Velocity Metrics</strong><br>Speed: ${speedKnots.toFixed(1)} kt (${speedms.toFixed(1)} m/s)`;
                 }
@@ -649,23 +558,17 @@
         trackingLabel.style.display = 'none';
     }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
+    // Initial Core Trigger Routine Configuration
     changeBasemap('dark');
+    fetchWebGLWindCoastlines();
 
     viewer.camera.setView({
-        destination: Cesium.Cartesian3.fromDegrees(125.0, 32.0, 5500000),
+        destination: Cesium.Cartesian3.fromDegrees(122.0, 24.0, 5000000), // Clean default vantage center point
         orientation: {
             heading: Cesium.Math.toRadians(0.0),
             pitch: Cesium.Math.toRadians(-90.0),
             roll: 0.0
         }
-    });
-
-    fetchWebGLWindCoastlines();
-
-    window.addEventListener('load', () => {
-        setTimeout(() => {
-            updateWeatherLayers();
-        }, 100);
     });
 </script>
 </body>

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail # Fail-fast shell architecture
 
-OUTPUT_DIR="../data"
+OUTPUT_DIR="./data"
 SCRATCH_DIR="./.tmp_scratch"
 CHECK_INTERVAL=3600 
 
@@ -79,7 +79,7 @@ while true; do
         fi
     fi
 
-    export GFS_DATE; export IFS_DATE; export AIFS_DATE
+    export GFS_DATE; export IFS_DATE; export AIFS_DATE; export SCRATCH_DIR
 
     CYCLE_ID="${FILE_DATE}_gfs${GFS_CYCLE}_ifs${IFS_CYCLE}_aifs${AIFS_CYCLE}"
     success_lockfile="$OUTPUT_DIR/.success_${CYCLE_ID}"
@@ -93,13 +93,14 @@ while true; do
     DATA_ERROR_OCCURRED=0
 
     # ==============================================================================
-    # 2. RUN PY311 PARSER LOOP
+    # 2. RUN PY311 PARSER LOOP (Switched to safe 'EOF' encapsulation)
     # ==============================================================================
     for fhr in "${FORECAST_HOURS[@]}"; do
         CLEAN_HOUR=$((10#$fhr))
         export CLEAN_HOUR; export fhr
 
-        python3.11 - <<EOF
+        # Notice the single quotes around 'EOF'. This prevents Bash from interfering with Python code
+        python3.11 - <<'EOF'
 import os, sys, json, gzip
 import numpy as np
 from herbie import Herbie
@@ -109,6 +110,7 @@ ifs_date_env = os.environ.get("IFS_DATE")
 aifs_date_env = os.environ.get("AIFS_DATE")
 clean_hour_env = int(os.environ.get("CLEAN_HOUR", 0))
 fhr_env = os.environ.get("fhr")
+scratch_dir = os.environ.get("SCRATCH_DIR", "./.tmp_scratch")
 
 def build_json(param, level, ds, u_var, v_var=None, is_pressure_level=False):
     if ds is None: return None
@@ -116,7 +118,6 @@ def build_json(param, level, ds, u_var, v_var=None, is_pressure_level=False):
         lon_key = 'longitude' if 'longitude' in ds.coords else 'lon'
         lat_key = 'latitude' if 'latitude' in ds.coords else 'lat'
         
-        # Check and resolve alternative variable names for U component inside H.xarray()
         if u_var not in ds.data_vars:
             alternatives = [
                 u_var.lower(), u_var.upper(), 
@@ -127,7 +128,6 @@ def build_json(param, level, ds, u_var, v_var=None, is_pressure_level=False):
             for alt in alternatives:
                 if alt and alt in ds.data_vars: u_var = alt; break
                 
-        # Check and resolve alternative variable names for V component inside H.xarray()
         if v_var and v_var not in ds.data_vars:
             alternatives = [
                 v_var.lower(), v_var.upper(), 
@@ -148,7 +148,6 @@ def build_json(param, level, ds, u_var, v_var=None, is_pressure_level=False):
             if is_pressure_level:
                 p_coord = next((c for c in ['isobaricInhPa', 'plev', 'level', 'isobaricInhPa_0'] if c in ds.coords), None)
                 if p_coord:
-                    # Fix scalar/0D dimension mapping conversion
                     p_array = list(np.atleast_1d(ds[p_coord].values))
                     target = level * 100 if p_coord == 'plev' else level
                     
@@ -172,7 +171,8 @@ def build_json(param, level, ds, u_var, v_var=None, is_pressure_level=False):
 
 def save_gzip(data, filename):
     if data is None: return
-    with gzip.open(os.path.join("${SCRATCH_DIR}", filename), "wt", encoding="utf-8") as f: json.dump(data, f)
+    with gzip.open(os.path.join(scratch_dir, filename), "wt", encoding="utf-8") as f: 
+        json.dump(data, f)
 
 def safe_xarray_fetch(herbie_obj, search_string):
     try: return herbie_obj.xarray(search_string)
@@ -201,7 +201,6 @@ try:
     save_gzip(build_json("Wind", 10, safe_xarray_fetch(He, ":10(u|v):"), "10u", "10v"), f"ecmwf_10m_f{fhr_env}.json.gz")
     
     for p in [850, 700, 500, 200]:
-        # Fix: Pull directly matching ECMWF wind tokens avoiding Geopotential groupings
         save_gzip(build_json("Wind", p, safe_xarray_fetch(He, f":(u|v):{p}:"), "u", "v", True), f"ecmwf_{p}_f{fhr_env}.json.gz")
     del He
 except Exception as e:
@@ -239,18 +238,6 @@ EOF
             git init
             git checkout -b "$BRANCH"
         fi
-        
-        git remote remove origin 2>/dev/null || true
-        git remote add origin "https://github.com/${githubUser}/${githubRepo}.git"
-        git update-ref -d refs/heads/"$BRANCH" 2>/dev/null || true
-
-        git add "$(basename "$0")"
-        git add ./data/*.json.gz
-        if [ -f "./index.html" ]; then git add index.html; fi
-
-        git commit -m "complete: cycle ${CYCLE_ID} - ${file_count} files synced"
-        echo "🚀 Force-pushing dynamic triple-model layers up to GitHub..."
-        git push -u origin "$BRANCH" --force
     fi
 
     find "$SCRATCH_DIR" -type f ! -name "*.idx" -delete 2>/dev/null

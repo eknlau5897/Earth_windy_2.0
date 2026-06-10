@@ -34,6 +34,14 @@ while true; do
     # ==============================================================================
     # 1. MODEL RUN DETERMINATION PLUMBING (FIXED FOR LINUX ENGINE RUNNERS)
     # ==============================================================================
+    if date -u -d "yesterday" +"%Y-%m-%d" >/dev/null 2>&1; then
+        # GNU Linux Environment
+        YESTERDAY=$(date -u -d "yesterday" +"%Y-%m-%d")
+    else
+        # macOS BSD Environment
+        YESTERDAY=$(date -u -v-1d +"%Y-%m-%d")
+    fi
+
     if [ "$CURRENT_HOUR" -ge 6 ] && [ "$CURRENT_HOUR" -lt 12 ]; then
         GFS_CYCLE="00"; GFS_DATE="${CURRENT_DATE} 00:00"
     elif [ "$CURRENT_HOUR" -ge 12 ] && [ "$CURRENT_HOUR" -lt 18 ]; then
@@ -43,7 +51,6 @@ while true; do
     else
         GFS_CYCLE="18"
         if [ "$CURRENT_HOUR" -lt 6 ]; then
-            YESTERDAY=$(date -u -d "yesterday" +"%Y-%m-%d") # Linux compatibility fix
             GFS_DATE="${YESTERDAY} 18:00"
         else
             GFS_DATE="${CURRENT_DATE} 18:00"
@@ -55,7 +62,6 @@ while true; do
     else
         IFS_CYCLE="12"
         if [ "$CURRENT_HOUR" -lt 9 ]; then
-            YESTERDAY=$(date -u -d "yesterday" +"%Y-%m-%d") # Linux compatibility fix
             IFS_DATE="${YESTERDAY} 12:00"
         else
             IFS_DATE="${CURRENT_DATE} 12:00"
@@ -67,7 +73,6 @@ while true; do
     else
         AIFS_CYCLE="12"
         if [ "$CURRENT_HOUR" -lt 7 ]; then
-            YESTERDAY=$(date -u -d "yesterday" +"%Y-%m-%d") # Linux compatibility fix
             AIFS_DATE="${YESTERDAY} 12:00"
         else
             AIFS_DATE="${CURRENT_DATE} 12:00"
@@ -75,17 +80,6 @@ while true; do
     fi
 
     export GFS_DATE; export IFS_DATE; export AIFS_DATE
-
-    CYCLE_ID="${FILE_DATE}_gfs${GFS_CYCLE}_ifs${IFS_CYCLE}_aifs${AIFS_CYCLE}"
-    success_lockfile="$OUTPUT_DIR/.success_${CYCLE_ID}"
-
-    if [ -f "$success_lockfile" ]; then
-        echo "[Daemon Track] Cycle configuration ${CYCLE_ID} processed. Idling..."
-        sleep "$CHECK_INTERVAL"
-        continue
-    fi
-    
-    DATA_ERROR_OCCURRED=0
 
     # ==============================================================================
     # 2. RUN PY311 PARSER LOOP

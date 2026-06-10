@@ -242,9 +242,9 @@ function updateWeatherLayers() {
 
 function getNCARColor(speedMS) { 
     const knots = speedMS / 0.514444; if (knots < 10) return null; 
-    if (knots < 22) return [255, 255, 255, 140]; if (knots < 34) return [128, 128, 128, 160]; 
-    if (knots < 48) return [0, 128, 0, 180]; if (knots < 64) return [0, 0, 255, 200]; if (knots < 83) return [255, 255, 0, 200];if (knots < 96) return [255, 165, 0, 200];if (knots < 137) return [255, 0, 0, 210]; 
-    return [128, 0, 128, 220]; 
+    if (knots < 20) return [30, 144, 255, 140]; if (knots < 40) return [0, 200, 100, 160]; 
+    if (knots < 60) return [255, 215, 0, 180]; if (knots < 80) return [255, 69, 0, 200]; 
+    return [255, 0, 255, 220]; 
 } 
 
 function renderVelocityCanvasStack(jsonData, drawHeatmap, drawArrows) { 

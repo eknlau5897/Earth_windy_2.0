@@ -21,7 +21,7 @@ for ((h=0; h<=120; h+=6)); do FORECAST_HOURS+=($(printf "%03d" "$h")); done
 for ((h=132; h<=240; h+=12)); do FORECAST_HOURS+=($(printf "%03d" "$h")); done
 
 echo "=================================================================="
-echo "   HERBIE TRIPLE-MODEL DAEMON ENGINE (GFS | IFS | AIFS) v4"
+echo "   HERBIE TRIPLE-MODEL DAEMON ENGINE (GFS | IFS | AIFS) v5"
 echo "=================================================================="
 
 while true; do
@@ -116,17 +116,32 @@ def build_json(param, level, ds, u_var, v_var=None, is_pressure_level=False):
         lon_key = 'longitude' if 'longitude' in ds.coords else 'lon'
         lat_key = 'latitude' if 'latitude' in ds.coords else 'lat'
         
+        # Check and resolve alternative variable names for U component inside H.xarray()
         if u_var not in ds.data_vars:
-            alternatives = [u_var.lower(), u_var.upper(), '10u' if u_var in ['u10', 'u'] else '', 'u10' if u_var in ['10u', 'u'] else '']
+            alternatives = [
+                u_var.lower(), u_var.upper(), 
+                '10u' if u_var in ['u10', 'u'] else '', 
+                'u10' if u_var in ['10u', 'u'] else '',
+                'u', 'ugrd', 'UGRD'
+            ]
             for alt in alternatives:
                 if alt and alt in ds.data_vars: u_var = alt; break
                 
+        # Check and resolve alternative variable names for V component inside H.xarray()
         if v_var and v_var not in ds.data_vars:
-            alternatives = [v_var.lower(), v_var.upper(), '10v' if v_var in ['v10', 'v'] else '', 'v10' if v_var in ['10v', 'v'] else '']
+            alternatives = [
+                v_var.lower(), v_var.upper(), 
+                '10v' if v_var in ['v10', 'v'] else '', 
+                'v10' if v_var in ['10v', 'v'] else '',
+                'v', 'vgrd', 'VGRD'
+            ]
             for alt in alternatives:
                 if alt and alt in ds.data_vars: v_var = alt; break
 
         if v_var:
+            if u_var not in ds.data_vars or v_var not in ds.data_vars:
+                raise KeyError(f"Could not find wind variables in dataset. Found: {list(ds.data_vars)}")
+                
             u_vals = ds[u_var].values; v_vals = ds[v_var].values
             if is_pressure_level:
                 p_coord = next((c for c in ['isobaricInhPa', 'plev', 'level', 'isobaricInhPa_0'] if c in ds.coords), None)
@@ -141,6 +156,8 @@ def build_json(param, level, ds, u_var, v_var=None, is_pressure_level=False):
                 {"header": {"parameterName": "V-component of wind", "surface1Value": level, "nx": len(ds[lon_key]), "ny": len(ds[lat_key]), "lo1": float(ds[lon_key].min()), "la1": float(ds[lat_key].max()), "lo2": float(ds[lon_key].max()), "la2": float(ds[lat_key].min()), "dx": 0.25, "dy": 0.25}, "data": np.where(np.isnan(v_vals), 0, v_vals).flatten().tolist()}
             ]
         else:
+            if u_var not in ds.data_vars:
+                raise KeyError(f"Could not find variable {u_var} in dataset. Found: {list(ds.data_vars)}")
             vals = ds[u_var].values
             return {"header": {"parameterName": param, "surface1Value": level, "nx": len(ds[lon_key]), "ny": len(ds[lat_key]), "lo1": float(ds[lon_key].min()), "la1": float(ds[lat_key].max()), "lo2": float(ds[lon_key].max()), "la2": float(ds[lat_key].min()), "dx": 0.25, "dy": 0.25}, "data": np.where(np.isnan(vals), 0, vals).flatten().tolist()}
     except Exception as e:

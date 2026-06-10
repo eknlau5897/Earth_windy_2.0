@@ -84,17 +84,18 @@
 <div id="cesiumContainer"></div>
 
 <script>
-    // Initialize Cesium Sandbox Viewer Setup
+    // Initialize Cesium Engine Sandbox
     const viewer = new Cesium.Viewer('cesiumContainer', {
         imageryProvider: false, baseLayerPicker: false, geocoder: false, homeButton: true,
         infoBox: false, navigationHelpButton: false, sceneModePicker: true, timeline: false, animation: false
     });
 
+    // Generate Dynamic Weather Timeline Matrix Array
     const forecastHours = [];
     for (let h = 0; h <= 120; h += 6) { forecastHours.push(String(h).padStart(3, '0')); }
     for (let h = 132; h <= 240; h += 12) { forecastHours.push(String(h).padStart(3, '0')); }
 
-    // Synchronize Range Input Slider Limits dynamically to prevent boundary errors
+    // Dynamic Binding configuration for Timeline Range Slider Boundaries
     const sliderInput = document.getElementById('timeSlider');
     sliderInput.min = "0";
     sliderInput.max = String(forecastHours.length - 1);
@@ -103,12 +104,14 @@
     let velocityTextureLayer = null, precipTextureLayer = null, combinedOutputLayer = null, arrowTextureLayer = null; 
     let activeDataset = null, activePrecipDataset = null;
     let webglWindCoastlineGeoJSON = null;
-    let currentUpdateToken = 0; 
+    let currentUpdateToken = 0; // Async race condition collision tracker
 
+    // Asset Location Config (Using jsDelivr Wrapper for Tokenless Public CDN mirroring)
     const githubUser = "eknlau5897"; 
     const githubRepo = "Earth_windy_2.0";
-    const cdnBase = `https://media.githubusercontent.com/media/${githubUser}/${githubRepo}/main/data`;
+    const cdnBase = `https://cdn.jsdelivr.net/gh/${githubUser}/${githubRepo}@main/data`;
 
+    // Interactive Hover Data Label Display Card
     const trackingLabel = document.createElement('div');
     trackingLabel.style.cssText = `
         position: absolute; background: rgba(10, 10, 14, 0.92); padding: 10px 14px; border-radius: 8px;
@@ -180,7 +183,7 @@
                 webglWindCoastlineGeoJSON = data;
                 updateWeatherLayers(); 
             })
-            .catch(err => console.error("Failed to fetch Natural Earth coastlines:", err));
+            .catch(err => console.error("Failed to load vector landmass topology:", err));
     }
 
     function drawWebGLWindCoastlines(ctx, width, height, header) {
@@ -190,7 +193,7 @@
         ctx.lineWidth = 1.2;
         ctx.lineJoin = 'round';
         ctx.lineCap = 'round';
-        ctx.strokeStyle = 'rgba(240, 240, 245, 0.45)'; // Sleek translucent tint
+        ctx.strokeStyle = 'rgba(240, 240, 245, 0.45)'; // Balanced tactical tint
 
         const { lo1, la1, lo2, la2 } = header;
         const lonRange = lo2 - lo1; const latRange = la1 - la2;
@@ -238,7 +241,7 @@
                     enforceLayerOrdering();
                 }
             })
-            .catch(err => console.error("Error loading RainViewer feed:", err));
+            .catch(err => console.error("Error connecting to live radar feed:", err));
     }
 
     function toggleH9Satellite(isVisible) {
@@ -276,6 +279,7 @@
         updateWeatherLayers();
     }
 
+    // Core Binary Unpacking Data Parsing Engine
     function updateWeatherLayers() {
         const localToken = ++currentUpdateToken;
 
@@ -300,33 +304,42 @@
 
         updateValidTimeDisplay(model, targetHour);
 
+        // PIPELINE 1: FETCH, UNZIP, AND PARSE WIND ARRAYS
         if (activeWindSpeed || activeWindArrows || document.getElementById('showCoastlines').checked) {
             fetch(`${cdnBase}/${model}_${level}_f${targetHour}.json.gz`)
                 .then(res => { if(!res.ok) throw new Error(); return res.arrayBuffer(); })
                 .then(buf => {
                     if (localToken !== currentUpdateToken) return;
-                    activeDataset = JSON.parse(pako.inflate(new Uint8Array(buf), { to: 'string' }));
+                    const byteArray = new Uint8Array(buf);
+                    const decompressedText = pako.inflate(byteArray, { to: 'string' });
+                    activeDataset = JSON.parse(decompressedText);
                     renderVelocityCanvasStack(activeDataset, activeWindSpeed, activeWindArrows);
-                }).catch(err => {});
+                }).catch(err => console.log("Wind array omitted or file pending refresh"));
         }
 
+        // PIPELINE 2: FETCH, UNZIP, AND PARSE PRECIPITATION MATRIX
         if (activePrecip) {
             fetch(`${cdnBase}/${model}_rain_f${targetHour}.json.gz`)
                 .then(res => { if(!res.ok) throw new Error(); return res.arrayBuffer(); })
                 .then(buf => {
                     if (localToken !== currentUpdateToken) return;
-                    activePrecipDataset = JSON.parse(pako.inflate(new Uint8Array(buf), { to: 'string' }));
+                    const byteArray = new Uint8Array(buf);
+                    const decompressedText = pako.inflate(byteArray, { to: 'string' });
+                    activePrecipDataset = JSON.parse(decompressedText);
                     renderPrecipitationTexture(activePrecipDataset);
-                }).catch(err => {});
+                }).catch(err => console.log("Rain array omitted or file pending refresh"));
         }
 
+        // PIPELINE 3: FETCH, UNZIP, AND PARSE CONTOUR ISOBARS
         if (activeIsobars) {
             fetch(`${cdnBase}/${model}_mslp_f${targetHour}.json.gz`)
                 .then(res => { if(!res.ok) throw new Error(); return res.arrayBuffer(); })
                 .then(buf => {
                     if (localToken !== currentUpdateToken) return;
-                    renderIsobarContours(JSON.parse(pako.inflate(new Uint8Array(buf), { to: 'string' })));
-                }).catch(err => {});
+                    const byteArray = new Uint8Array(buf);
+                    const decompressedText = pako.inflate(byteArray, { to: 'string' });
+                    renderIsobarContours(JSON.parse(decompressedText));
+                }).catch(err => console.log("MSLP isobar omitted or file pending refresh"));
         }
     }
 
@@ -513,7 +526,7 @@
         return pts;
     }
 
-    // Interactive Hover Tracking Engine Logic
+    // Dynamic Mouse Hover Coordinate Lookup Handler
     const mouseHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
     mouseHandler.setInputAction(function(movement) {
         if (!activeDataset && !activePrecipDataset) { trackingLabel.style.display = 'none'; return; }
@@ -558,12 +571,12 @@
         trackingLabel.style.display = 'none';
     }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
-    // Initial Core Trigger Routine Configuration
+    // Initial Engine Bootstrap Initialization
     changeBasemap('dark');
     fetchWebGLWindCoastlines();
 
     viewer.camera.setView({
-        destination: Cesium.Cartesian3.fromDegrees(122.0, 24.0, 5000000), // Clean default vantage center point
+        destination: Cesium.Cartesian3.fromDegrees(122.0, 24.0, 5000000), // Clean vantage overview over East Asia
         orientation: {
             heading: Cesium.Math.toRadians(0.0),
             pitch: Cesium.Math.toRadians(-90.0),

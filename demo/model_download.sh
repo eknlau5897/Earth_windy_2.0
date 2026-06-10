@@ -1,11 +1,11 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+set -euo pipefail # Fail-fast shell architecture
 
 OUTPUT_DIR="./data"
 SCRATCH_DIR="./.tmp_scratch"
 CHECK_INTERVAL=3600 
 
-# Define repository variables for the dynamic re-initialization matrix
+# GitHub Deployment parameters
 BRANCH="main"
 githubUser="eknlau5897"
 githubRepo="Earth_windy_2.0"
@@ -17,11 +17,11 @@ mkdir -p "$SCRATCH_DIR"
 export HERBIE_DATA="$SCRATCH_DIR"
 
 FORECAST_HOURS=()
-for ((h=0; h<=120; h+=6)); do FORECAST_HOURS+=($(printf "%03d" $h)); done
-for ((h=132; h<=240; h+=12)); do FORECAST_HOURS+=($(printf "%03d" $h)); done
+for ((h=0; h<=120; h+=6)); do FORECAST_HOURS+=($(printf "%03d" "$h")); done
+for ((h=132; h<=240; h+=12)); do FORECAST_HOURS+=($(printf "%03d" "$h")); done
 
 echo "=================================================================="
-echo "   HERBIE TRIPLE-MODEL DAEMON ENGINE (NATIVE STANDARD STORAGE)   "
+echo "   HERBIE TRIPLE-MODEL DAEMON ENGINE (PATCHED PRODUCTION v2)     "
 echo "=================================================================="
 
 while true; do
@@ -32,7 +32,7 @@ while true; do
     FILE_DATE=$(date -u +"%Y%m%d")
 
     # ==============================================================================
-    # 1. MODEL RUN DETERMINATION PLUMBING
+    # 1. MODEL RUN DETERMINATION PLUMBING (FIXED FOR LINUX ENGINE RUNNERS)
     # ==============================================================================
     if [ "$CURRENT_HOUR" -ge 6 ] && [ "$CURRENT_HOUR" -lt 12 ]; then
         GFS_CYCLE="00"; GFS_DATE="${CURRENT_DATE} 00:00"
@@ -43,7 +43,7 @@ while true; do
     else
         GFS_CYCLE="18"
         if [ "$CURRENT_HOUR" -lt 6 ]; then
-            YESTERDAY=$(date -u -v-1d +"%Y-%m-%d")
+            YESTERDAY=$(date -u -d "yesterday" +"%Y-%m-%d") # Linux compatibility fix
             GFS_DATE="${YESTERDAY} 18:00"
         else
             GFS_DATE="${CURRENT_DATE} 18:00"
@@ -55,7 +55,7 @@ while true; do
     else
         IFS_CYCLE="12"
         if [ "$CURRENT_HOUR" -lt 9 ]; then
-            YESTERDAY=$(date -u -v-1d +"%Y-%m-%d")
+            YESTERDAY=$(date -u -d "yesterday" +"%Y-%m-%d") # Linux compatibility fix
             IFS_DATE="${YESTERDAY} 12:00"
         else
             IFS_DATE="${CURRENT_DATE} 12:00"
@@ -67,7 +67,7 @@ while true; do
     else
         AIFS_CYCLE="12"
         if [ "$CURRENT_HOUR" -lt 7 ]; then
-            YESTERDAY=$(date -u -v-1d +"%Y-%m-%d")
+            YESTERDAY=$(date -u -d "yesterday" +"%Y-%m-%d") # Linux compatibility fix
             AIFS_DATE="${YESTERDAY} 12:00"
         else
             AIFS_DATE="${CURRENT_DATE} 12:00"
@@ -91,18 +91,17 @@ while true; do
     # 2. RUN PY311 PARSER LOOP
     # ==============================================================================
     for fhr in "${FORECAST_HOURS[@]}"; do
-        CLEAN_HOUR=$(echo "$fhr" | sed 's/^0*//')
-        [ -z "$CLEAN_HOUR" ] && CLEAN_HOUR="0"
+        # Fixed: Safely treat string integers as base-10 to bypass octal crash and empty string issue
+        CLEAN_HOUR=$((10#$fhr))
         export CLEAN_HOUR; export fhr
 
-        python3.11 - <<EOF
+        python3 - <<EOF
 import os, sys, json, gzip
 import numpy as np
 from herbie import Herbie
 
 gfs_date_env = os.environ.get("GFS_DATE")
 ifs_date_env = os.environ.get("IFS_DATE")
-aifs_date_env = os.environ.get("AIFS_DATE")
 clean_hour_env = int(os.environ.get("CLEAN_HOUR", 0))
 fhr_env = os.environ.get("fhr")
 
@@ -131,11 +130,13 @@ def build_json(param, level, ds, u_var, v_var=None, is_pressure_level=False):
             vals = ds[u_var].values
             return {"header": {"parameterName": param, "surface1Value": level, "nx": len(ds[lon_key]), "ny": len(ds[lat_key]), "lo1": float(ds[lon_key].min()), "la1": float(ds[lat_key].max()), "lo2": float(ds[lon_key].max()), "la2": float(ds[lat_key].min()), "dx": 0.25, "dy": 0.25}, "data": np.where(np.isnan(vals), 0, vals).flatten().tolist()}
     except Exception as e:
+        print(f"Extraction error processing f{fhr_env}: {e}")
         return None
 
 def save_gzip(data, filename):
     if data is None: return
-    with gzip.open(os.path.join("${SCRATCH_DIR}", filename), "wt", encoding="utf-8") as f: json.dump(data, f)
+    with gzip.open(os.path.join("${SCRATCH_DIR}", filename), "wt", encoding="utf-8") as f: 
+        json.dump(data, f)
 
 def safe_xarray_fetch(herbie_obj, search_string):
     try: return herbie_obj.xarray(search_string)
@@ -143,33 +144,41 @@ def safe_xarray_fetch(herbie_obj, search_string):
         try: herbie_obj.download(); return herbie_obj.xarray(search_string)
         except: return None
 
+# GFS Extraction Block
 try:
     Hg = Herbie(gfs_date_env, model="gfs", product="pgrb2.0p25", fxx=clean_hour_env, verbose=False, overwrite=True)
     save_gzip(build_json("Pressure reduced to MSL", 0, safe_xarray_fetch(Hg, ":PRMSL:mean sea level:"), "prmsl"), f"gfs_mslp_f{fhr_env}.json.gz")
-    if clean_hour_env > 0: save_gzip(build_json("Total Precipitation", 0, safe_xarray_fetch(Hg, ":APCP:surface:"), "tp"), f"gfs_rain_f{fhr_env}.json.gz")
+    if clean_hour_env > 0: 
+        save_gzip(build_json("Total Precipitation", 0, safe_xarray_fetch(Hg, ":APCP:surface:"), "tp"), f"gfs_rain_f{fhr_env}.json.gz")
     save_gzip(build_json("Wind", 10, safe_xarray_fetch(Hg, ":(U|V)GRD:10 m above ground:"), "u10", "v10"), f"gfs_10m_f{fhr_env}.json.gz")
     Hg.remove()
-except: pass
+except Exception as e:
+    print(f"⚠️ GFS Fetch failed: {e}")
 
+# ECMWF IFS Extraction Block
 try:
     He = Herbie(ifs_date_env, model="ifs", product="oper", source="ecmwf", fxx=clean_hour_env, verbose=False, overwrite=True)
     save_gzip(build_json("Pressure reduced to MSL", 0, safe_xarray_fetch(He, ":msl:"), "msl"), f"ecmwf_mslp_f{fhr_env}.json.gz")
     save_gzip(build_json("Wind", 10, safe_xarray_fetch(He, ":(10u|10v):"), "10u", "10v"), f"ecmwf_10m_f{fhr_env}.json.gz")
     He.remove()
-except: pass
-
+except Exception as e:
+    print(f"⚠️ ECMWF IFS Fetch failed: {e}")
 EOF
-        if [ $? -ne 0 ]; then DATA_ERROR_OCCURRED=1; else
+
+        # Check Python process exit status safely
+        if [ $? -ne 0 ]; then 
+            DATA_ERROR_OCCURRED=1
+        else
             find "$SCRATCH_DIR" -type f -name "*.json.gz" -exec mv {} "$OUTPUT_DIR/" \;
         fi
     done
 
     # ==============================================================================
-    # 3. HISTORY COLLAPSE PIPELINE (NATIVE TRACKING - NO LFS)
+    # 3. HISTORY COLLAPSE PIPELINE (CLEAN SINGLE-COMMIT FORCE PUSH)
     # ==============================================================================
     file_count=$(find "$OUTPUT_DIR" -type f -name "*.json.gz" | wc -l)
 
-    if [ "$file_count" -gt 0 ] && [ $DATA_ERROR_OCCURRED -eq 0 ]; then
+    if [ "$file_count" -gt 0 ] && [ "$DATA_ERROR_OCCURRED" -eq 0 ]; then
         touch "$success_lockfile"
         
         if [ ! -d ".git" ]; then
@@ -180,23 +189,20 @@ EOF
         git remote remove origin 2>/dev/null || true
         git remote add origin "https://github.com/${githubUser}/${githubRepo}.git"
         
-        # Soft-wipe the reference tracking registry to reset our baseline down to 1 commit
+        # Completely drop references to keep the git history tiny (Avoids repository bloating)
         git update-ref -d refs/heads/"$BRANCH" 2>/dev/null || true
 
-        # Package code and data records directly via standard tracking mechanics
         git add "$(basename "$0")"
         git add ./data/*.json.gz
         if [ -f "./index.html" ]; then git add index.html; fi
-        if [ -d "./demo" ]; then git add ./demo/* 2>/dev/null; fi
 
-        git commit -m "complete: cycle ${CYCLE_ID} - ${file_count} files synced (NATIVE STORAGE)"
+        git commit -m "complete: cycle ${CYCLE_ID} - ${file_count} files synced"
         
-        echo "🚀 Force-pushing clear native assets up to GitHub..."
+        echo "🚀 Force-pushing production assets into GitHub Repository..."
         git push -u origin "$BRANCH" --force
-        git update-ref refs/remotes/origin/"$BRANCH" refs/heads/"$BRANCH"
     fi
 
-    # Clear loose temporary cache streams to preserve storage array space
+    # Wipe residual cache files to protect disk array allocations
     find "$SCRATCH_DIR" -type f ! -name "*.idx" -delete 2>/dev/null
     
     echo "[Cycle Complete] Sleeping for $((CHECK_INTERVAL / 60)) minutes..."

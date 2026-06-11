@@ -2,7 +2,7 @@
 <html lang="en"> 
 <head> 
     <meta charset="UTF-8"> 
-    <title>地球風場3D - 完整整合系統</title> 
+    <title>地球風場3D - 完整整合與衛星快取優化</title> 
     <script src="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Cesium.js"></script> 
     <link href="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Widgets/widgets.css" rel="stylesheet"> 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script> 
@@ -75,7 +75,7 @@
         <label><input type="checkbox" id="showPrecip" onchange="updateWeatherLayers()"> NIPY Spectral Precipitation (0-100mm)</label> 
         <hr style="width:100%; border:0; border-top:1px solid rgba(255,255,255,0.1); margin: 5px 0;"> 
         <label><input type="checkbox" id="realtimeRadar" onchange="toggleRealtimeRadar(this.checked)"> 📡 Live Weather Radar (RainViewer)</label> 
-        <label><input type="checkbox" id="h9Satellite" onchange="toggleH9Satellite(this.checked)"> 🛰️ Himawari-9 Infrared (NASA GIBS WMTS)</label> 
+        <label><input type="checkbox" id="h9Satellite" onchange="toggleH9Satellite(this.checked)"> 🛰️ Himawari Infrared (NASA GIBS Caching)</label> 
     </div> 
 </div> 
 
@@ -104,11 +104,15 @@ for (let h = 0; h <= 120; h += 6) forecastHours.push(String(h).padStart(3, '0'))
 for (let h = 132; h <= 240; h += 12) forecastHours.push(String(h).padStart(3, '0')); 
 document.getElementById('timeSlider').max = forecastHours.length - 1; 
 
+// LAYER STATE VARIABLES
 let currentBaseLayer = null, h9SatelliteLayer = null, liveRadarLayer = null; 
 let velocityTextureLayer = null, precipTextureLayer = null, combinedOutputLayer = null; 
 let activeDataset = null, activePrecipDataset = null, webglWindCoastlineGeoJSON = null; 
 let currentUpdateToken = 0; 
 const cdnBase = `https://lc2nz3kv-5500.asse.devtunnels.ms/data`; 
+
+// THE MAP IMAGE PROVIDER CACHE DICTIONARY (Ported directly from your Leaflet concept)
+let satLayerCache = {};
 
 const trackingLabel = document.createElement('div'); 
 trackingLabel.style.cssText = `position: absolute; background: rgba(10, 10, 14, 0.92); padding: 10px 14px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.15); color: #fff; font-family: monospace; font-size: 12px; pointer-events: none; display: none; z-index: 5000; box-shadow: 0 6px 20px rgba(0,0,0,0.6);`; 
@@ -158,7 +162,7 @@ function getNipySpectralColor(mmRate) {
     return [nipyPalette[pIdx], nipyPalette[pIdx+1], nipyPalette[pIdx+2], nipyPalette[pIdx+3]]; 
 } 
 
-// Particle System Variables
+// Particle Physics Engine Array Tracker
 let particles = [];
 const maxParticles = 7500; 
 const particleMaxAge = 40;
@@ -220,7 +224,7 @@ function updateAndDrawParticles() {
     
     ctx.globalCompositeOperation = "source-over";
     ctx.lineWidth = 1.2;
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.65)"; // Forced crisp white streamers
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.65)"; 
     
     for (let i = 0; i < particles.length; i++) {
         let p = particles[i];
@@ -357,16 +361,18 @@ function toggleRealtimeRadar(isVisible) {
     }); 
 } 
 
-// Formalized OGC WMTS Infrared Architecture 
+// CESIUM PORT OF YOUR LEAFLET CACHING SATELLITE SYSTEM
 function toggleH9Satellite(isVisible) { 
-    if (h9SatelliteLayer) { viewer.imageryLayers.remove(h9SatelliteLayer); h9SatelliteLayer = null; } 
-    if (!isVisible) return; 
+    if (!isVisible) { 
+        if (h9SatelliteLayer) { h9SatelliteLayer.alpha = 0.0; h9SatelliteLayer = null; } 
+        return; 
+    } 
     
-    // 1. Calculate the past timeframe (Current Time - 50 Minutes)
+    // 1. Calculate historical time footprint (Current Time - 50 Minutes)
     const targetDate = new Date(); 
     targetDate.setMinutes(targetDate.getMinutes() - 50); 
     
-    // Safety check for ingestion lag
+    // Safety buffer for transmission ingestion lag
     if (targetDate.getUTCMinutes() % 10 < 3) {
         targetDate.setMinutes(targetDate.getMinutes() - 10);
     }
@@ -377,30 +383,43 @@ function toggleH9Satellite(isVisible) {
     const hours = String(targetDate.getUTCHours()).padStart(2, '0');
     const roundedMinutes = String(Math.floor(targetDate.getUTCMinutes() / 10) * 10).padStart(2, '0');
     
-    // 2. Format a pristine, unencoded path string that GIBS natively handles
-    const dateStr = `${year}-${month}-${day}`;
-    const timeStr = `${hours}${roundedMinutes}`; // E.g., "0050" instead of "00:50:00Z"
-    
-    console.log(`Loading Satellite Stream Layer Date: ${dateStr}, Time Block: ${timeStr}`); 
+    // 2. Compute exactTimeStr format to mirror your function output
+    const exactTimeStr = `${year}-${month}-${day}T${hours}${roundedMinutes}00Z`;
+    console.log("Cesium Mapping Query Cache Hook:", exactTimeStr); 
 
-    // 3. Connect via the native REST template which natively avoids query string character encoding bugs
-    h9SatelliteLayer = viewer.imageryLayers.addImageryProvider(
-        new Cesium.UrlTemplateImageryProvider({
-            url: 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/' +
-                 'Himawari9_AHI_Clean_Infrared_Band13/default/{customDate}T{customTime}00Z/' +
-                 'GoogleMapsCompatible_Level9/{z}/{y}/{x}.png',
-            customTags: {
-                customDate: function() { return dateStr; },
-                customTime: function() { return timeStr; }
-            },
-            maximumLevel: 9,
-            tilingScheme: new Cesium.WebMercatorTilingScheme(),
-            credit: new Cesium.Credit('NASA Global Imagery Browse Services')
-        })
-    ); 
+    // 3. Cache Validation Logic
+    if (satLayerCache[exactTimeStr]) { 
+        if (h9SatelliteLayer && h9SatelliteLayer !== satLayerCache[exactTimeStr]) { 
+            h9SatelliteLayer.alpha = 0.0; // Leaflet equivalent to hidden layer
+        } 
+        h9SatelliteLayer = satLayerCache[exactTimeStr]; 
+        h9SatelliteLayer.alpha = 0.75; // Set opacity directly inside Cesium's runtime pipeline (.setOpacity(0.75))
+    } else { 
+        // 4. Cache Miss - Instantiate fresh layer to look at level 6 parameters
+        const himawariWorldview = viewer.imageryLayers.addImageryProvider(
+            new Cesium.UrlTemplateImageryProvider({
+                url: 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/' +
+                     'Himawari_AHI_Band13_Clean_Infrared/default/{time}/' +
+                     'GoogleMapsCompatible_Level6/{z}/{y}/{x}.png',
+                customTags: {
+                    time: function() { return exactTimeStr; }
+                },
+                maximumLevel: 6, // maxNativeZoom: 6
+                tilingScheme: new Cesium.WebMercatorTilingScheme()
+            })
+        ); 
+        
+        himawariWorldview.alpha = 0.75; // Apply opacity setting
+        satLayerCache[exactTimeStr] = himawariWorldview; // Index layer in global container
+        
+        if (h9SatelliteLayer) { 
+            h9SatelliteLayer.alpha = 0.0; 
+        } 
+        h9SatelliteLayer = himawariWorldview; 
+    } 
 
     enforceLayerOrdering(); 
-}
+} 
 
 function enforceLayerOrdering() { 
     if (currentBaseLayer) viewer.imageryLayers.lowerToBottom(currentBaseLayer); 
@@ -554,7 +573,6 @@ mouseHandler.setInputAction(function(movement) {
 
 changeBasemap('dark'); 
 fetchWebGLWindCoastlines(); 
-// Focused initialization viewpoint right over the Western Pacific / East Asia region to capture the geostationary satellite disk
 viewer.camera.setView({ destination: Cesium.Cartesian3.fromDegrees(135.0, 25.0, 8000000), orientation: { heading: Cesium.Math.toRadians(0.0), pitch: Cesium.Math.toRadians(-90.0) } }); 
 </script> 
 </body> 

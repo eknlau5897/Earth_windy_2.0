@@ -2,7 +2,7 @@
 <html lang="en"> 
 <head> 
     <meta charset="UTF-8"> 
-    <title>地球風場3D - 高密度粒子流</title> 
+    <title>地球風場3D - 高密度白粒子</title> 
     <script src="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Cesium.js"></script> 
     <link href="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Widgets/widgets.css" rel="stylesheet"> 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script> 
@@ -69,8 +69,8 @@
 
     <div class="toggle-container"> 
         <label><input type="checkbox" id="showCoastlines" checked onchange="updateWeatherLayers()"> WebGL-Wind Coastlines (White)</label> 
-        <label><input type="checkbox" id="showWindSpeed" onchange="updateWeatherLayers()"> NCAR Wind Speed Heatmap (0-120kt)</label> 
-        <label><input type="checkbox" id="showParticles" checked> High-Density Wind Particles (GIST Rainbow)</label> 
+        <label><input type="checkbox" id="showWindSpeed" checked onchange="updateWeatherLayers()"> NCAR Wind Speed Heatmap (0-120kt)</label> 
+        <label><input type="checkbox" id="showParticles" checked> High-Density Wind Particles (White Streamers)</label> 
         <label><input type="checkbox" id="showIsobars" checked onchange="updateWeatherLayers()"> Pressure Isobars</label> 
         <label><input type="checkbox" id="showPrecip" onchange="updateWeatherLayers()"> NIPY Spectral Precipitation (0-100mm)</label> 
         <hr style="width:100%; border:0; border-top:1px solid rgba(255,255,255,0.1); margin: 5px 0;"> 
@@ -114,7 +114,7 @@ const trackingLabel = document.createElement('div');
 trackingLabel.style.cssText = `position: absolute; background: rgba(10, 10, 14, 0.92); padding: 10px 14px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.15); color: #fff; font-family: monospace; font-size: 12px; pointer-events: none; display: none; z-index: 5000; box-shadow: 0 6px 20px rgba(0,0,0,0.6);`; 
 document.body.appendChild(trackingLabel); 
 
-// Color Palettes Setup
+// NCAR Heatmap Palette Setup
 const ncarCanvas = document.createElement('canvas'); ncarCanvas.width = 256; ncarCanvas.height = 1; 
 const ncarCtx = ncarCanvas.getContext('2d'); 
 const ncarGrad = ncarCtx.createLinearGradient(0, 0, 256, 0); 
@@ -128,18 +128,7 @@ ncarGrad.addColorStop(1.0, 'rgba(255, 0, 255, 0.95)');
 ncarCtx.fillStyle = ncarGrad; ncarCtx.fillRect(0, 0, 256, 1); 
 const ncarPalette = ncarCtx.getImageData(0, 0, 256, 1).data; 
 
-const rainbowCanvas = document.createElement('canvas'); rainbowCanvas.width = 256; rainbowCanvas.height = 1; 
-const rbCtx = rainbowCanvas.getContext('2d'); 
-const rbGrad = rbCtx.createLinearGradient(0, 0, 256, 0); 
-rbGrad.addColorStop(0.0, '#0000ff'); 
-rbGrad.addColorStop(0.2, '#00ffff'); 
-rbGrad.addColorStop(0.4, '#00ff00'); 
-rbGrad.addColorStop(0.6, '#ffff00'); 
-rbGrad.addColorStop(0.8, '#ff7f00'); 
-rbGrad.addColorStop(1.0, '#ff0000'); 
-rbCtx.fillStyle = rbGrad; rbCtx.fillRect(0, 0, 256, 1); 
-const rainbowPalette = rbCtx.getImageData(0, 0, 256, 1).data;
-
+// NIPY Precipitation Palette Setup
 const nipyCanvas = document.createElement('canvas'); nipyCanvas.width = 256; nipyCanvas.height = 1; 
 const nipyCtx = nipyCanvas.getContext('2d'); 
 const nipyGrad = nipyCtx.createLinearGradient(0, 0, 256, 0); 
@@ -162,13 +151,6 @@ function getNCARColor(speedMS) {
     return [ncarPalette[pIdx], ncarPalette[pIdx+1], ncarPalette[pIdx+2], ncarPalette[pIdx+3]]; 
 } 
 
-function getRainbowArrowColorStr(speedMS) { 
-    const knots = speedMS / 0.514444; 
-    let idx = Math.min(Math.floor((knots / 120) * 255), 255); 
-    let pIdx = idx * 4; 
-    return `rgba(${rainbowPalette[pIdx]}, ${rainbowPalette[pIdx+1]}, ${rainbowPalette[pIdx+2]}, 0.85)`; 
-} 
-
 function getNipySpectralColor(mmRate) { 
     if (mmRate < 0.1) return null; 
     let idx = Math.min(Math.floor((mmRate / 100) * 255), 255); 
@@ -176,10 +158,10 @@ function getNipySpectralColor(mmRate) {
     return [nipyPalette[pIdx], nipyPalette[pIdx+1], nipyPalette[pIdx+2], nipyPalette[pIdx+3]]; 
 } 
 
-// Particle System Variables
+// Particle System Tracking Array
 let particles = [];
-const maxParticles = 6000; // Change this to manage particle density
-const particleMaxAge = 45;
+const maxParticles = 7500; // Shift higher for even denser arrays
+const particleMaxAge = 40;
 const speedScale = 0.08;
 
 function initParticles() {
@@ -231,13 +213,16 @@ function updateAndDrawParticles() {
     }
     
     ctx.save();
-    ctx.fillStyle = "rgba(0, 0, 0, 0.90)"; 
-    ctx.globalCompositeOperation = "destination-in"; // Creates smooth trail fades
+    ctx.fillStyle = "rgba(0, 0, 0, 0.92)"; 
+    ctx.globalCompositeOperation = "destination-in"; // Fades trailing histories evenly
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.restore();
     
     ctx.globalCompositeOperation = "source-over";
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = 1.2;
+    
+    // Hardcoded white tinting with dynamic opacity scaling across velocities
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.65)";
     
     for (let i = 0; i < particles.length; i++) {
         let p = particles[i];
@@ -263,7 +248,6 @@ function updateAndDrawParticles() {
             continue;
         }
         
-        // Transform the geographic wind vector into actual 2D screen coordinate displacement
         const endLon = lon + wind.u * speedScale * 0.05;
         const endLat = lat + wind.v * speedScale * 0.05;
         const endCartesian = Cesium.Cartesian3.fromDegrees(endLon, endLat, cartographic.height);
@@ -276,10 +260,8 @@ function updateAndDrawParticles() {
         
         const dx = screenPos2.x - p.x;
         const dy = screenPos2.y - p.y;
-        const speed = Math.sqrt(wind.u * wind.u + wind.v * wind.v);
         
         ctx.beginPath();
-        ctx.strokeStyle = getRainbowArrowColorStr(speed);
         ctx.moveTo(p.x, p.y);
         ctx.lineTo(p.x + dx, p.y + dy);
         ctx.stroke();
@@ -290,7 +272,7 @@ function updateAndDrawParticles() {
     }
 }
 
-// Hooks particle updater straight to Cesium render loops
+// Hook core particle tick straight into Cesium update events
 viewer.scene.preRender.addEventListener(function() {
     updateAndDrawParticles();
 });
@@ -345,26 +327,26 @@ function fetchWebGLWindCoastlines() {
         .then(res => res.json()).then(data => { webglWindCoastlineGeoJSON = data; updateWeatherLayers(); }); 
 } 
 
-function drawWebGLWindCoastlines(ctx, width, height, header) { 
+function drawWebGLWindCoastlines(ctxT, width, height, header) { 
     if (!document.getElementById('showCoastlines').checked || !webglWindCoastlineGeoJSON) return; 
-    ctx.save(); ctx.lineWidth = 1.2; ctx.strokeStyle = 'rgba(255,255,255,0.3)'; 
+    ctxT.save(); ctxT.lineWidth = 1.2; ctxT.strokeStyle = 'rgba(255,255,255,0.3)'; 
     const { lo1, la1, lo2, la2 } = header; 
     const lonRange = lo2 - lo1, latRange = la1 - la2; 
 
     webglWindCoastlineGeoJSON.features.forEach(f => { 
         const line = f.geometry.coordinates; let firstPoint = true, lastX = null; 
-        ctx.beginPath(); 
+        ctxT.beginPath(); 
         line.forEach(pt => { 
             let lon = pt[0]; const lat = pt[1]; 
             if (lo1 >= 0 && lon < 0) lon += 360; 
             const x = ((lon - lo1) / lonRange) * width, y = ((la1 - lat) / latRange) * height; 
-            if (!firstPoint && lastX !== null && Math.abs(x - lastX) > width * 0.5) ctx.moveTo(x, y); 
-            else firstPoint ? ctx.moveTo(x, y) : ctx.lineTo(x, y); 
+            if (!firstPoint && lastX !== null && Math.abs(x - lastX) > width * 0.5) ctxT.moveTo(x, y); 
+            else firstPoint ? ctxT.moveTo(x, y) : ctxT.lineTo(x, y); 
             firstPoint = false; lastX = x; 
         }); 
-        ctx.stroke(); 
+        ctxT.stroke(); 
     }); 
-    ctx.restore(); 
+    ctxT.restore(); 
 } 
 
 function toggleRealtimeRadar(isVisible) { 

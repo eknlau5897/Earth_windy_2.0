@@ -291,13 +291,12 @@ function calculateOperationalBaseTime(modelType) {
             runYear = yesterday.getUTCFullYear(); runMonth = yesterday.getUTCMonth(); runDay = yesterday.getUTCDate(); runHour = 12; 
         } 
     } else { 
-        if (utcHours >= 19) runHour = 12; 
-        else if (utcHours >= 13) runHour = 6; 
+        if (utcHours >= 19) runHour = 12;  
         else if (utcHours >= 7) runHour = 0; 
         else { 
             const yesterday = new Date(Date.UTC(runYear, runMonth, runDay - 1)); 
             runYear = yesterday.getUTCFullYear(); runMonth = yesterday.getUTCMonth(); runDay = yesterday.getUTCDate(); 
-            runHour = utcHours >= 0 ? 18 : 12; 
+            runHour = utcHours >= 0 ? 12 : 12; 
         } 
     } 
     return new Date(Date.UTC(runYear, runMonth, runDay, runHour)); 

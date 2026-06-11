@@ -71,7 +71,7 @@
         <label><input type="checkbox" id="showWindSpeed" onchange="updateWeatherLayers()"> NCAR Wind Speed Heatmap (0-120kt)</label> 
         <label><input type="checkbox" id="showWindArrows" checked onchange="updateWeatherLayers()"> Large Movable Wind Arrows</label> 
         <label><input type="checkbox" id="showIsobars" checked onchange="updateWeatherLayers()"> Pressure Isobars</label> 
-        <label><input type="checkbox" id="showPrecip" onchange="updateWeatherLayers()"> Forecast Precipitation Intensity</label> 
+        <label><input type="checkbox" id="showPrecip" onchange="updateWeatherLayers()"> NIPY Spectral Precipitation (0-100mm)</label> 
         <hr style="width:100%; border:0; border-top:1px solid rgba(255,255,255,0.1); margin: 5px 0;"> 
         <label><input type="checkbox" id="realtimeRadar" onchange="toggleRealtimeRadar(this.checked)"> 📡 Live Weather Radar (RainViewer)</label> 
         <label><input type="checkbox" id="h9Satellite" onchange="toggleH9Satellite(this.checked)"> Himawari-9 Band 13 (IR Satellite Live)</label> 
@@ -87,7 +87,6 @@ const viewer = new Cesium.Viewer('cesiumContainer', {
     infoBox: false, navigationHelpButton: false, sceneModePicker: true, timeline: false, animation: false 
 }); 
 
-// 1. Build and Sync Timeline Index arrays
 const forecastHours = []; 
 for (let h = 0; h <= 120; h += 6) forecastHours.push(String(h).padStart(3, '0')); 
 for (let h = 132; h <= 240; h += 12) forecastHours.push(String(h).padStart(3, '0')); 
@@ -99,10 +98,72 @@ let activeDataset = null, activePrecipDataset = null, webglWindCoastlineGeoJSON 
 let currentUpdateToken = 0; 
 const cdnBase = `https://lc2nz3kv-5500.asse.devtunnels.ms/data`; 
 
-// 2. Inline Setup for Info Tracking Overlay Label
 const trackingLabel = document.createElement('div'); 
 trackingLabel.style.cssText = `position: absolute; background: rgba(10, 10, 14, 0.92); padding: 10px 14px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.15); color: #fff; font-family: monospace; font-size: 12px; pointer-events: none; display: none; z-index: 5000; box-shadow: 0 6px 20px rgba(0,0,0,0.6);`; 
 document.body.appendChild(trackingLabel); 
+
+// Pre-render reference canvases for fast color evaluations 
+const ncarCanvas = document.createElement('canvas'); ncarCanvas.width = 256; ncarCanvas.height = 1; 
+const ncarCtx = ncarCanvas.getContext('2d'); 
+const ncarGrad = ncarCtx.createLinearGradient(0, 0, 256, 0); 
+ncarGrad.addColorStop(0.0, 'rgba(0, 0, 128, 0)'); 
+ncarGrad.addColorStop(0.05, 'rgba(0, 0, 255, 0.4)'); 
+ncarGrad.addColorStop(0.25, 'rgba(0, 255, 255, 0.6)'); 
+ncarGrad.addColorStop(0.45, 'rgba(0, 255, 0, 0.7)'); 
+ncarGrad.addColorStop(0.65, 'rgba(255, 255, 0, 0.8)'); 
+ncarGrad.addColorStop(0.85, 'rgba(255, 0, 0, 0.9)'); 
+ncarGrad.addColorStop(1.0, 'rgba(255, 0, 255, 0.95)'); 
+ncarCtx.fillStyle = ncarGrad; ncarCtx.fillRect(0, 0, 256, 1); 
+const ncarPalette = ncarCtx.getImageData(0, 0, 256, 1).data; 
+
+const rainbowCanvas = document.createElement('canvas'); rainbowCanvas.width = 256; rainbowCanvas.height = 1; 
+const rbCtx = rainbowCanvas.getContext('2d'); 
+const rbGrad = rbCtx.createLinearGradient(0, 0, 256, 0); 
+rbGrad.addColorStop(0.0, '#0000ff'); 
+rbGrad.addColorStop(0.2, '#00ffff'); 
+rbGrad.addColorStop(0.4, '#00ff00'); 
+rbGrad.addColorStop(0.6, '#ffff00'); 
+rbGrad.addColorStop(0.8, '#ff7f00'); 
+rbGrad.addColorStop(1.0, '#ff0000'); 
+rbCtx.fillStyle = rbGrad; rbCtx.fillRect(0, 0, 256, 1); 
+
+// Pre-render NIPY Spectral baseline lookup ramp
+const nipyCanvas = document.createElement('canvas'); nipyCanvas.width = 256; nipyCanvas.height = 1; 
+const nipyCtx = nipyCanvas.getContext('2d'); 
+const nipyGrad = nipyCtx.createLinearGradient(0, 0, 256, 0); 
+nipyGrad.addColorStop(0.0, 'rgba(40, 40, 40, 0)');      // Transparent below 0.1mm
+nipyGrad.addColorStop(0.02, 'rgba(100, 30, 150, 0.35)'); // Dark Purple / Trace Rain
+nipyGrad.addColorStop(0.15, 'rgba(0, 0, 200, 0.55)');    // Blue
+nipyGrad.addColorStop(0.35, 'rgba(0, 180, 50, 0.65)');   // Green
+nipyGrad.addColorStop(0.55, 'rgba(235, 235, 0, 0.75)');  // Yellow
+nipyGrad.addColorStop(0.75, 'rgba(230, 100, 0, 0.85)');  // Orange
+nipyGrad.addColorStop(0.92, 'rgba(200, 0, 0, 0.9)');     // Deep Red
+nipyGrad.addColorStop(1.0, 'rgba(254, 185, 215, 0.95)'); // Light Pink / Max 100mm+
+nipyCtx.fillStyle = nipyGrad; nipyCtx.fillRect(0, 0, 256, 1); 
+const nipyPalette = nipyCtx.getImageData(0, 0, 256, 1).data; 
+
+function getNCARColor(speedMS) { 
+    const knots = speedMS / 0.514444; 
+    if (knots <= 0.5) return null; 
+    let idx = Math.min(Math.floor((knots / 120) * 255), 255); 
+    let pIdx = idx * 4; 
+    return [ncarPalette[pIdx], ncarPalette[pIdx+1], ncarPalette[pIdx+2], ncarPalette[pIdx+3]]; 
+} 
+
+function getRainbowArrowColor(speedMS) { 
+    const knots = speedMS / 0.514444; 
+    let factor = Math.min(knots / 120, 1.0); 
+    let idx = Math.floor(factor * 255); 
+    let pData = rbCtx.getImageData(idx, 0, 1, 1).data; 
+    return `rgb(${pData[0]}, ${pData[1]}, ${pData[2]})`; 
+} 
+
+function getNipySpectralColor(mmRate) { 
+    if (mmRate < 0.1) return null; 
+    let idx = Math.min(Math.floor((mmRate / 100) * 255), 255); 
+    let pIdx = idx * 4; 
+    return [nipyPalette[pIdx], nipyPalette[pIdx+1], nipyPalette[pIdx+2], nipyPalette[pIdx+3]]; 
+} 
 
 function calculateOperationalBaseTime(modelType) { 
     const now = new Date(); 
@@ -154,7 +215,7 @@ function fetchWebGLWindCoastlines() {
 
 function drawWebGLWindCoastlines(ctx, width, height, header) { 
     if (!document.getElementById('showCoastlines').checked || !webglWindCoastlineGeoJSON) return; 
-    ctx.save(); ctx.lineWidth = 1.2; ctx.strokeStyle = 'rgba(255,0,0,0.4)'; 
+    ctx.save(); ctx.lineWidth = 1.2; ctx.strokeStyle = 'rgba(255,255,255,0.3)'; 
     const { lo1, la1, lo2, la2 } = header; 
     const lonRange = lo2 - lo1, latRange = la1 - la2; 
 
@@ -240,13 +301,6 @@ function updateWeatherLayers() {
     } 
 } 
 
-function getNCARColor(speedMS) { 
-    const knots = speedMS / 0.514444; if (knots < 10) return null; 
-    if (knots < 20) return [30, 144, 255, 140]; if (knots < 40) return [0, 200, 100, 160]; 
-    if (knots < 60) return [255, 215, 0, 180]; if (knots < 80) return [255, 69, 0, 200]; 
-    return [255, 0, 255, 220]; 
-} 
-
 function renderVelocityCanvasStack(jsonData, drawHeatmap, drawArrows) { 
     const uData = jsonData[0].data, vData = jsonData[1].data, header = jsonData[0].header; 
     const { nx, ny, lo1, la1, lo2, la2 } = header; 
@@ -273,18 +327,18 @@ function renderWindVectorArrows(jsonData) {
     const uData = jsonData[0].data, vData = jsonData[1].data, header = jsonData[0].header; 
     const { nx, ny, lo1, la1, lo2, la2 } = header; 
     const canvas = document.createElement('canvas'); canvas.width = 2048; canvas.height = 1024; const ctx = canvas.getContext('2d'); 
-    const spacing = 20, scaleX = canvas.width / nx, scaleY = canvas.height / ny; 
+    const spacing = 22, scaleX = canvas.width / nx, scaleY = canvas.height / ny; 
 
-    ctx.lineWidth = 1.5; 
+    ctx.lineWidth = 1.8; 
     for (let y = spacing/2; y < canvas.height; y += spacing) { 
         for (let x = spacing/2; x < canvas.width; x += spacing) { 
             const idx = Math.floor(y / scaleY) * nx + Math.floor(x / scaleX); 
             if (idx < uData.length) { 
                 const u = uData[idx], v = vData[idx], speed = Math.sqrt(u*u + v*v); 
-                if (speed > 2.0) { 
+                if (speed > 1.5) { 
                     ctx.save(); ctx.translate(x, y); ctx.rotate(Math.atan2(-v, u)); 
-                    ctx.strokeStyle = speed > 15 ? '#ff453a' : (speed > 8 ? '#ffd60a' : '#ffffff'); 
-                    ctx.beginPath(); ctx.moveTo(-6, 0); ctx.lineTo(6, 0); ctx.lineTo(2, -3); ctx.moveTo(6, 0); ctx.lineTo(2, 3); ctx.stroke(); ctx.restore(); 
+                    ctx.strokeStyle = getRainbowArrowColor(speed); 
+                    ctx.beginPath(); ctx.moveTo(-7, 0); ctx.lineTo(7, 0); ctx.lineTo(3, -3); ctx.moveTo(7, 0); ctx.lineTo(3, 3); ctx.stroke(); ctx.restore(); 
                 } 
             } 
         } 
@@ -296,12 +350,16 @@ function renderWindVectorArrows(jsonData) {
 function renderPrecipitationTexture(jsonData) { 
     const { data, header } = jsonData, { nx, ny, lo1, la1, lo2, la2 } = header; 
     const canvas = document.createElement('canvas'); canvas.width = nx; canvas.height = ny; const ctx = canvas.getContext('2d'); const imgData = ctx.createImageData(nx, ny); 
+    
     for (let i = 0; i < data.length; i++) { 
         const val = data[i]; 
-        if (val > 0.2) { 
+        const color = getNipySpectralColor(val); 
+        if (color) { 
             const cIdx = i * 4; 
-            if (val < 4) { imgData.data[cIdx+1] = 200; imgData.data[cIdx+3] = 130; } 
-            else { imgData.data[cIdx] = 230; imgData.data[cIdx+1] = 50; imgData.data[cIdx+3] = 180; } 
+            imgData.data[cIdx] = color[0]; 
+            imgData.data[cIdx+1] = color[1]; 
+            imgData.data[cIdx+2] = color[2]; 
+            imgData.data[cIdx+3] = color[3]; 
         } 
     } 
     ctx.putImageData(imgData, 0, 0); 
@@ -343,7 +401,6 @@ function getCellIntersections(x, y, vTL, vTR, vBL, vBR, iso) {
     return pts; 
 } 
 
-// 3. Grid Coordinates Hover Inspector Event Handling
 const mouseHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas); 
 mouseHandler.setInputAction(function(movement) { 
     if (!activeDataset && !activePrecipDataset) { trackingLabel.style.display = 'none'; return; } 
@@ -373,7 +430,6 @@ mouseHandler.setInputAction(function(movement) {
     trackingLabel.style.display = 'none'; 
 }, Cesium.ScreenSpaceEventType.MOUSE_MOVE); 
 
-// Initial execution call parameters
 changeBasemap('dark'); 
 fetchWebGLWindCoastlines(); 
 viewer.camera.setView({ destination: Cesium.Cartesian3.fromDegrees(125.0, 32.0, 5500000), orientation: { heading: Cesium.Math.toRadians(0.0), pitch: Cesium.Math.toRadians(-90.0) } }); 

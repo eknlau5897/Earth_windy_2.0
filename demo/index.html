@@ -362,12 +362,11 @@ function toggleH9Satellite(isVisible) {
     if (h9SatelliteLayer) { viewer.imageryLayers.remove(h9SatelliteLayer); h9SatelliteLayer = null; } 
     if (!isVisible) return; 
     
-    // 1. Calculate past frame timeframe (Current Time - 50 Minutes)
+    // 1. Calculate the past timeframe (Current Time - 50 Minutes)
     const targetDate = new Date(); 
     targetDate.setMinutes(targetDate.getMinutes() - 50); 
     
-    // 2. Add an ingestion fallback safeguard. 
-    // If we're right on the edge of a 10-minute slot, push back another 10 mins to prevent 404 cache responses.
+    // Safety check for ingestion lag
     if (targetDate.getUTCMinutes() % 10 < 3) {
         targetDate.setMinutes(targetDate.getMinutes() - 10);
     }
@@ -378,21 +377,22 @@ function toggleH9Satellite(isVisible) {
     const hours = String(targetDate.getUTCHours()).padStart(2, '0');
     const roundedMinutes = String(Math.floor(targetDate.getUTCMinutes() / 10) * 10).padStart(2, '0');
     
-    // 3. Assemble the exact timestamp needed for sub-daily GIBS tracking
-    const timestamp = `${year}-${month}-${day}T${hours}:${roundedMinutes}:00Z`;
-    console.log("Requesting NASA GIBS Infrared Layer at timestamp:", timestamp); 
+    // 2. Format a pristine, unencoded path string that GIBS natively handles
+    const dateStr = `${year}-${month}-${day}`;
+    const timeStr = `${hours}${roundedMinutes}`; // E.g., "0050" instead of "00:50:00Z"
+    
+    console.log(`Loading Satellite Stream Layer Date: ${dateStr}, Time Block: ${timeStr}`); 
 
-    // 4. Force an explicit, lowercase parameters template to completely bypass Cesium's casing engine
+    // 3. Connect via the native REST template which natively avoids query string character encoding bugs
     h9SatelliteLayer = viewer.imageryLayers.addImageryProvider(
         new Cesium.UrlTemplateImageryProvider({
-            url: 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/wmts.cgi?' +
-                 'Service=WMTS&Request=GetTile&Version=1.0.0&' +
-                 'layer=Himawari9_AHI_Clean_Infrared_Band13&' +
-                 'style=default&' +
-                 'tilematrixset=GoogleMapsCompatible_Level9&' +
-                 'TileMatrix={z}&TileRow={y}&TileCol={x}&' +
-                 'format=image/png&' +
-                 'time=' + timestamp, // Forcing explicit lowercase 'time=' query mapping
+            url: 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/' +
+                 'Himawari9_AHI_Clean_Infrared_Band13/default/{customDate}T{customTime}00Z/' +
+                 'GoogleMapsCompatible_Level9/{z}/{y}/{x}.png',
+            customTags: {
+                customDate: function() { return dateStr; },
+                customTime: function() { return timeStr; }
+            },
             maximumLevel: 9,
             tilingScheme: new Cesium.WebMercatorTilingScheme(),
             credit: new Cesium.Credit('NASA Global Imagery Browse Services')

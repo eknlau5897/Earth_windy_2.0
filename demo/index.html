@@ -2,7 +2,7 @@
 <html lang="en"> 
 <head> 
     <meta charset="UTF-8"> 
-    <title>地球風場3D</title> 
+    <title>地球風場3D - 高密度粒子流</title> 
     <script src="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Cesium.js"></script> 
     <link href="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Widgets/widgets.css" rel="stylesheet"> 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script> 
@@ -26,6 +26,7 @@
         .toggle-container input[type="checkbox"] { width: 16px; height: 16px; accent-color: #0a84ff; cursor: pointer; } 
         #legend { position: absolute; bottom: 30px; right: 30px; background: rgba(10, 10, 14, 0.85); padding: 12px 16px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.08); font-family: monospace; font-size: 11px; color: #fff; z-index: 1000; pointer-events: none; display: none; } 
         .valid-time-display { font-size: 11px; font-family: monospace; color: #34c759; margin-top: 4px; display: block; } 
+        #particleCanvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 999; }
     </style> 
 </head> 
 <body> 
@@ -69,7 +70,7 @@
     <div class="toggle-container"> 
         <label><input type="checkbox" id="showCoastlines" checked onchange="updateWeatherLayers()"> WebGL-Wind Coastlines (White)</label> 
         <label><input type="checkbox" id="showWindSpeed" onchange="updateWeatherLayers()"> NCAR Wind Speed Heatmap (0-120kt)</label> 
-        <label><input type="checkbox" id="showWindArrows" checked onchange="updateWeatherLayers()"> Large Movable Wind Arrows</label> 
+        <label><input type="checkbox" id="showParticles" checked> High-Density Wind Particles (GIST Rainbow)</label> 
         <label><input type="checkbox" id="showIsobars" checked onchange="updateWeatherLayers()"> Pressure Isobars</label> 
         <label><input type="checkbox" id="showPrecip" onchange="updateWeatherLayers()"> NIPY Spectral Precipitation (0-100mm)</label> 
         <hr style="width:100%; border:0; border-top:1px solid rgba(255,255,255,0.1); margin: 5px 0;"> 
@@ -80,6 +81,7 @@
 
 <div id="legend"></div> 
 <div id="cesiumContainer"></div> 
+<canvas id="particleCanvas"></canvas>
 
 <script> 
 const viewer = new Cesium.Viewer('cesiumContainer', { 
@@ -87,13 +89,23 @@ const viewer = new Cesium.Viewer('cesiumContainer', {
     infoBox: false, navigationHelpButton: false, sceneModePicker: true, timeline: false, animation: false 
 }); 
 
+const canvas = document.getElementById('particleCanvas');
+const ctx = canvas.getContext('2d');
+
+function resizeCanvas() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
 const forecastHours = []; 
 for (let h = 0; h <= 120; h += 6) forecastHours.push(String(h).padStart(3, '0')); 
 for (let h = 132; h <= 240; h += 12) forecastHours.push(String(h).padStart(3, '0')); 
 document.getElementById('timeSlider').max = forecastHours.length - 1; 
 
 let currentBaseLayer = null, h9SatelliteLayer = null, liveRadarLayer = null; 
-let velocityTextureLayer = null, precipTextureLayer = null, combinedOutputLayer = null, arrowTextureLayer = null; 
+let velocityTextureLayer = null, precipTextureLayer = null, combinedOutputLayer = null; 
 let activeDataset = null, activePrecipDataset = null, webglWindCoastlineGeoJSON = null; 
 let currentUpdateToken = 0; 
 const cdnBase = `https://lc2nz3kv-5500.asse.devtunnels.ms/data`; 
@@ -102,7 +114,7 @@ const trackingLabel = document.createElement('div');
 trackingLabel.style.cssText = `position: absolute; background: rgba(10, 10, 14, 0.92); padding: 10px 14px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.15); color: #fff; font-family: monospace; font-size: 12px; pointer-events: none; display: none; z-index: 5000; box-shadow: 0 6px 20px rgba(0,0,0,0.6);`; 
 document.body.appendChild(trackingLabel); 
 
-// Pre-render reference canvases for fast color evaluations 
+// Color Palettes Setup
 const ncarCanvas = document.createElement('canvas'); ncarCanvas.width = 256; ncarCanvas.height = 1; 
 const ncarCtx = ncarCanvas.getContext('2d'); 
 const ncarGrad = ncarCtx.createLinearGradient(0, 0, 256, 0); 
@@ -126,19 +138,19 @@ rbGrad.addColorStop(0.6, '#ffff00');
 rbGrad.addColorStop(0.8, '#ff7f00'); 
 rbGrad.addColorStop(1.0, '#ff0000'); 
 rbCtx.fillStyle = rbGrad; rbCtx.fillRect(0, 0, 256, 1); 
+const rainbowPalette = rbCtx.getImageData(0, 0, 256, 1).data;
 
-// Pre-render NIPY Spectral baseline lookup ramp
 const nipyCanvas = document.createElement('canvas'); nipyCanvas.width = 256; nipyCanvas.height = 1; 
 const nipyCtx = nipyCanvas.getContext('2d'); 
 const nipyGrad = nipyCtx.createLinearGradient(0, 0, 256, 0); 
-nipyGrad.addColorStop(0.0, 'rgba(40, 40, 40, 0)');      // Transparent below 0.1mm
-nipyGrad.addColorStop(0.02, 'rgba(100, 30, 150, 0.35)'); // Dark Purple / Trace Rain
-nipyGrad.addColorStop(0.15, 'rgba(0, 0, 200, 0.55)');    // Blue
-nipyGrad.addColorStop(0.35, 'rgba(0, 180, 50, 0.65)');   // Green
-nipyGrad.addColorStop(0.55, 'rgba(235, 235, 0, 0.75)');  // Yellow
-nipyGrad.addColorStop(0.75, 'rgba(230, 100, 0, 0.85)');  // Orange
-nipyGrad.addColorStop(0.92, 'rgba(200, 0, 0, 0.9)');     // Deep Red
-nipyGrad.addColorStop(1.0, 'rgba(254, 185, 215, 0.95)'); // Light Pink / Max 100mm+
+nipyGrad.addColorStop(0.0, 'rgba(40, 40, 40, 0)'); 
+nipyGrad.addColorStop(0.02, 'rgba(100, 30, 150, 0.35)'); 
+nipyGrad.addColorStop(0.15, 'rgba(0, 0, 200, 0.55)'); 
+nipyGrad.addColorStop(0.35, 'rgba(0, 180, 50, 0.65)'); 
+nipyGrad.addColorStop(0.55, 'rgba(235, 235, 0, 0.75)'); 
+nipyGrad.addColorStop(0.75, 'rgba(230, 100, 0, 0.85)'); 
+nipyGrad.addColorStop(0.92, 'rgba(200, 0, 0, 0.9)'); 
+nipyGrad.addColorStop(1.0, 'rgba(254, 185, 215, 0.95)'); 
 nipyCtx.fillStyle = nipyGrad; nipyCtx.fillRect(0, 0, 256, 1); 
 const nipyPalette = nipyCtx.getImageData(0, 0, 256, 1).data; 
 
@@ -150,12 +162,11 @@ function getNCARColor(speedMS) {
     return [ncarPalette[pIdx], ncarPalette[pIdx+1], ncarPalette[pIdx+2], ncarPalette[pIdx+3]]; 
 } 
 
-function getRainbowArrowColor(speedMS) { 
+function getRainbowArrowColorStr(speedMS) { 
     const knots = speedMS / 0.514444; 
-    let factor = Math.min(knots / 120, 1.0); 
-    let idx = Math.floor(factor * 255); 
-    let pData = rbCtx.getImageData(idx, 0, 1, 1).data; 
-    return `rgb(${pData[0]}, ${pData[1]}, ${pData[2]})`; 
+    let idx = Math.min(Math.floor((knots / 120) * 255), 255); 
+    let pIdx = idx * 4; 
+    return `rgba(${rainbowPalette[pIdx]}, ${rainbowPalette[pIdx+1]}, ${rainbowPalette[pIdx+2]}, 0.85)`; 
 } 
 
 function getNipySpectralColor(mmRate) { 
@@ -164,6 +175,127 @@ function getNipySpectralColor(mmRate) {
     let pIdx = idx * 4; 
     return [nipyPalette[pIdx], nipyPalette[pIdx+1], nipyPalette[pIdx+2], nipyPalette[pIdx+3]]; 
 } 
+
+// Particle System Variables
+let particles = [];
+const maxParticles = 6000; // Change this to manage particle density
+const particleMaxAge = 45;
+const speedScale = 0.08;
+
+function initParticles() {
+    particles = [];
+    for (let i = 0; i < maxParticles; i++) {
+        particles.push({
+            x: Math.random() * canvas.width,
+            y: Math.random() * canvas.height,
+            age: Math.floor(Math.random() * particleMaxAge)
+        });
+    }
+}
+
+function getGridValue(lon, lat) {
+    if (!activeDataset) return null;
+    const header = activeDataset[0].header;
+    let uData = activeDataset[0].data;
+    let vData = activeDataset[1].data;
+    
+    let adjustedLon = lon;
+    if (header.lo1 >= 0 && lon < 0) adjustedLon += 360;
+    
+    if (adjustedLon < header.lo1 || adjustedLon > header.lo2 || lat < header.la2 || lat > header.la1) {
+        return null;
+    }
+    
+    const x = ((adjustedLon - header.lo1) / (header.lo2 - header.lo1)) * (header.nx - 1);
+    const y = ((header.la1 - lat) / (header.la1 - header.la2)) * (header.ny - 1);
+    
+    const x0 = Math.floor(x); const x1 = Math.min(x0 + 1, header.nx - 1);
+    const y0 = Math.floor(y); const y1 = Math.min(y0 + 1, header.ny - 1);
+    
+    const i00 = y0 * header.nx + x0; const i10 = y0 * header.nx + x1;
+    const i01 = y1 * header.nx + x0; const i11 = y1 * header.nx + x1;
+    
+    const wx1 = x - x0; const wx0 = 1 - wx1;
+    const wy1 = y - y0; const wy0 = 1 - wy1;
+    
+    const u = uData[i00]*wx0*wy0 + uData[i10]*wx1*wy0 + uData[i01]*wx0*wy1 + uData[i11]*wx1*wy1;
+    const v = vData[i00]*wx0*wy0 + vData[i10]*wx1*wy0 + vData[i01]*wx0*wy1 + vData[i11]*wx1*wy1;
+    
+    return { u, v };
+}
+
+function updateAndDrawParticles() {
+    if (!document.getElementById('showParticles').checked || !activeDataset) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        return;
+    }
+    
+    ctx.save();
+    ctx.fillStyle = "rgba(0, 0, 0, 0.90)"; 
+    ctx.globalCompositeOperation = "destination-in"; // Creates smooth trail fades
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
+    
+    ctx.globalCompositeOperation = "source-over";
+    ctx.lineWidth = 1.5;
+    
+    for (let i = 0; i < particles.length; i++) {
+        let p = particles[i];
+        if (p.age >= particleMaxAge) {
+            p.x = Math.random() * canvas.width;
+            p.y = Math.random() * canvas.height;
+            p.age = 0;
+        }
+        
+        const cartesian = viewer.camera.pickEllipsoid(new Cesium.Cartesian2(p.x, p.y), viewer.scene.globe.ellipsoid);
+        if (!cartesian) {
+            p.age = particleMaxAge;
+            continue;
+        }
+        
+        const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
+        const lon = Cesium.Math.toDegrees(cartographic.longitude);
+        const lat = Cesium.Math.toDegrees(cartographic.latitude);
+        
+        const wind = getGridValue(lon, lat);
+        if (!wind) {
+            p.age = particleMaxAge;
+            continue;
+        }
+        
+        // Transform the geographic wind vector into actual 2D screen coordinate displacement
+        const endLon = lon + wind.u * speedScale * 0.05;
+        const endLat = lat + wind.v * speedScale * 0.05;
+        const endCartesian = Cesium.Cartesian3.fromDegrees(endLon, endLat, cartographic.height);
+        
+        const screenPos2 = viewer.scene.cartesianToCanvasCoordinates(endCartesian);
+        if (!screenPos2) {
+            p.age = particleMaxAge;
+            continue;
+        }
+        
+        const dx = screenPos2.x - p.x;
+        const dy = screenPos2.y - p.y;
+        const speed = Math.sqrt(wind.u * wind.u + wind.v * wind.v);
+        
+        ctx.beginPath();
+        ctx.strokeStyle = getRainbowArrowColorStr(speed);
+        ctx.moveTo(p.x, p.y);
+        ctx.lineTo(p.x + dx, p.y + dy);
+        ctx.stroke();
+        
+        p.x += dx;
+        p.y += dy;
+        p.age++;
+    }
+}
+
+// Hooks particle updater straight to Cesium render loops
+viewer.scene.preRender.addEventListener(function() {
+    updateAndDrawParticles();
+});
+
+initParticles();
 
 function calculateOperationalBaseTime(modelType) { 
     const now = new Date(); 
@@ -257,7 +389,7 @@ function toggleH9Satellite(isVisible) {
 
 function enforceLayerOrdering() { 
     if (currentBaseLayer) viewer.imageryLayers.lowerToBottom(currentBaseLayer); 
-    [velocityTextureLayer, precipTextureLayer, h9SatelliteLayer, liveRadarLayer, arrowTextureLayer, combinedOutputLayer].forEach(layer => { 
+    [velocityTextureLayer, precipTextureLayer, h9SatelliteLayer, liveRadarLayer, combinedOutputLayer].forEach(layer => { 
         if (layer) viewer.imageryLayers.raiseToTop(layer); 
     }); 
 } 
@@ -272,23 +404,23 @@ async function fetchGzJson(url, token, callback) {
 
 function updateWeatherLayers() { 
     const localToken = ++currentUpdateToken; 
-    [velocityTextureLayer, precipTextureLayer, combinedOutputLayer, arrowTextureLayer].forEach(l => { if(l) viewer.imageryLayers.remove(l); }); 
-    velocityTextureLayer = precipTextureLayer = combinedOutputLayer = arrowTextureLayer = activeDataset = activePrecipDataset = null; 
+    [velocityTextureLayer, precipTextureLayer, combinedOutputLayer].forEach(l => { if(l) viewer.imageryLayers.remove(l); }); 
+    velocityTextureLayer = precipTextureLayer = combinedOutputLayer = activeDataset = activePrecipDataset = null; 
 
     const model = document.getElementById('modelSelect').value; 
     const level = document.getElementById('levelSelect').value; 
     const targetHour = forecastHours[document.getElementById('timeSlider').value]; 
 
     const activeWindSpeed = document.getElementById('showWindSpeed').checked; 
-    const activeWindArrows = document.getElementById('showWindArrows').checked; 
     const activeIsobars = document.getElementById('showIsobars').checked; 
     const activePrecip = document.getElementById('showPrecip').checked; 
 
     updateValidTimeDisplay(model, targetHour); 
 
-    if (activeWindSpeed || activeWindArrows || document.getElementById('showCoastlines').checked) { 
+    if (activeWindSpeed || document.getElementById('showParticles').checked || document.getElementById('showCoastlines').checked) { 
         fetchGzJson(`${cdnBase}/${model}_${level}_f${targetHour}.json.gz`, localToken, data => { 
-            activeDataset = data; renderVelocityCanvasStack(data, activeWindSpeed, activeWindArrows); 
+            activeDataset = data; 
+            renderVelocityCanvasStack(data, activeWindSpeed); 
         }); 
     } 
     if (activePrecip) { 
@@ -301,55 +433,30 @@ function updateWeatherLayers() {
     } 
 } 
 
-function renderVelocityCanvasStack(jsonData, drawHeatmap, drawArrows) { 
+function renderVelocityCanvasStack(jsonData, drawHeatmap) { 
     const uData = jsonData[0].data, vData = jsonData[1].data, header = jsonData[0].header; 
     const { nx, ny, lo1, la1, lo2, la2 } = header; 
-    const canvas = document.createElement('canvas'); canvas.width = nx; canvas.height = ny; const ctx = canvas.getContext('2d'); 
+    const canvasT = document.createElement('canvas'); canvasT.width = nx; canvasT.height = ny; const ctxT = canvasT.getContext('2d'); 
 
     if (drawHeatmap) { 
-        const imgData = ctx.createImageData(nx, ny); 
+        const imgData = ctxT.createImageData(nx, ny); 
         for (let i = 0; i < uData.length; i++) { 
             const cIdx = i * 4, speed = Math.sqrt(uData[i]*uData[i] + vData[i]*vData[i]), color = getNCARColor(speed); 
             if (color) { imgData.data[cIdx] = color[0]; imgData.data[cIdx+1] = color[1]; imgData.data[cIdx+2] = color[2]; imgData.data[cIdx+3] = color[3]; } 
         } 
-        ctx.putImageData(imgData, 0, 0); 
+        ctxT.putImageData(imgData, 0, 0); 
     } 
 
-    drawWebGLWindCoastlines(ctx, nx, ny, header); 
+    drawWebGLWindCoastlines(ctxT, nx, ny, header); 
     let w = lo1 > 180 ? lo1 - 360 : lo1, e = lo2 > 180 ? lo2 - 360 : lo2; if (e <= w) e += 360; 
 
-    velocityTextureLayer = viewer.imageryLayers.addImageryProvider(new Cesium.SingleTileImageryProvider({ url: canvas.toDataURL(), rectangle: Cesium.Rectangle.fromDegrees(w, la2, e, la1) })); 
-    if (drawArrows) renderWindVectorArrows(jsonData); 
+    velocityTextureLayer = viewer.imageryLayers.addImageryProvider(new Cesium.SingleTileImageryProvider({ url: canvasT.toDataURL(), rectangle: Cesium.Rectangle.fromDegrees(w, la2, e, la1) })); 
     enforceLayerOrdering(); 
-} 
-
-function renderWindVectorArrows(jsonData) { 
-    const uData = jsonData[0].data, vData = jsonData[1].data, header = jsonData[0].header; 
-    const { nx, ny, lo1, la1, lo2, la2 } = header; 
-    const canvas = document.createElement('canvas'); canvas.width = 2048; canvas.height = 1024; const ctx = canvas.getContext('2d'); 
-    const spacing = 22, scaleX = canvas.width / nx, scaleY = canvas.height / ny; 
-
-    ctx.lineWidth = 1.8; 
-    for (let y = spacing/2; y < canvas.height; y += spacing) { 
-        for (let x = spacing/2; x < canvas.width; x += spacing) { 
-            const idx = Math.floor(y / scaleY) * nx + Math.floor(x / scaleX); 
-            if (idx < uData.length) { 
-                const u = uData[idx], v = vData[idx], speed = Math.sqrt(u*u + v*v); 
-                if (speed > 1.5) { 
-                    ctx.save(); ctx.translate(x, y); ctx.rotate(Math.atan2(-v, u)); 
-                    ctx.strokeStyle = getRainbowArrowColor(speed); 
-                    ctx.beginPath(); ctx.moveTo(-7, 0); ctx.lineTo(7, 0); ctx.lineTo(3, -3); ctx.moveTo(7, 0); ctx.lineTo(3, 3); ctx.stroke(); ctx.restore(); 
-                } 
-            } 
-        } 
-    } 
-    let w = lo1 > 180 ? lo1 - 360 : lo1, e = lo2 > 180 ? lo2 - 360 : lo2; if (e <= w) e += 360; 
-    arrowTextureLayer = viewer.imageryLayers.addImageryProvider(new Cesium.SingleTileImageryProvider({ url: canvas.toDataURL(), rectangle: Cesium.Rectangle.fromDegrees(w, la2, e, la1) })); 
 } 
 
 function renderPrecipitationTexture(jsonData) { 
     const { data, header } = jsonData, { nx, ny, lo1, la1, lo2, la2 } = header; 
-    const canvas = document.createElement('canvas'); canvas.width = nx; canvas.height = ny; const ctx = canvas.getContext('2d'); const imgData = ctx.createImageData(nx, ny); 
+    const canvasT = document.createElement('canvas'); canvasT.width = nx; canvasT.height = ny; const ctxT = canvasT.getContext('2d'); const imgData = ctxT.createImageData(nx, ny); 
     
     for (let i = 0; i < data.length; i++) { 
         const val = data[i]; 
@@ -362,33 +469,33 @@ function renderPrecipitationTexture(jsonData) {
             imgData.data[cIdx+3] = color[3]; 
         } 
     } 
-    ctx.putImageData(imgData, 0, 0); 
+    ctxT.putImageData(imgData, 0, 0); 
     let w = lo1 > 180 ? lo1 - 360 : lo1, e = lo2 > 180 ? lo2 - 360 : lo2; if (e <= w) e += 360; 
-    precipTextureLayer = viewer.imageryLayers.addImageryProvider(new Cesium.SingleTileImageryProvider({ url: canvas.toDataURL(), rectangle: Cesium.Rectangle.fromDegrees(w, la2, e, la1) })); 
+    precipTextureLayer = viewer.imageryLayers.addImageryProvider(new Cesium.SingleTileImageryProvider({ url: canvasT.toDataURL(), rectangle: Cesium.Rectangle.fromDegrees(w, la2, e, la1) })); 
     enforceLayerOrdering(); 
 } 
 
 function renderIsobarContours(jsonData) { 
     const { data, header } = jsonData, { nx, ny, lo1, la1, dx, dy } = header; 
-    const canvas = document.createElement('canvas'); canvas.width = 2048; canvas.height = 1024; const ctx = canvas.getContext('2d'); 
-    ctx.lineWidth = 1.2; ctx.textBaseline = 'middle'; ctx.textAlign = 'center'; 
+    const canvasT = document.createElement('canvas'); canvasT.width = 2048; canvasT.height = 1024; const ctxT = canvasT.getContext('2d'); 
+    ctxT.lineWidth = 1.2; ctxT.textBaseline = 'middle'; ctxT.textAlign = 'center'; 
 
     for (let p = 97000; p <= 104000; p += 400) { 
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)'; ctx.fillStyle = 'rgba(255, 255, 255, 0.6)'; ctx.font = '11px sans-serif'; 
+        ctxT.strokeStyle = 'rgba(255, 255, 255, 0.4)'; ctxT.fillStyle = 'rgba(255, 255, 255, 0.6)'; ctxT.font = '11px sans-serif'; 
         for (let y = 0; y < ny - 1; y++) { 
             for (let x = 0; x < nx - 1; x++) { 
                 const i = y * nx + x; const pts = getCellIntersections(x, y, data[i], data[i+1], data[i+nx], data[i+nx+1], p); 
                 if (pts.length >= 2) { 
-                    const x1 = (pts[0].x / nx) * canvas.width, y1 = (pts[0].y / ny) * canvas.height; 
-                    const x2 = (pts[1].x / nx) * canvas.width, y2 = (pts[1].y / ny) * canvas.height; 
-                    if (x % 45 === 0 && y % 45 === 0) ctx.fillText(String(Math.round(p/100)), x1, y1); 
-                    else { ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); } 
+                    const x1 = (pts[0].x / nx) * canvasT.width, y1 = (pts[0].y / ny) * canvasT.height; 
+                    const x2 = (pts[1].x / nx) * canvasT.width, y2 = (pts[1].y / ny) * canvasT.height; 
+                    if (x % 45 === 0 && y % 45 === 0) ctxT.fillText(String(Math.round(p/100)), x1, y1); 
+                    else { ctxT.beginPath(); ctxT.moveTo(x1, y1); ctxT.lineTo(x2, y2); ctxT.stroke(); } 
                 } 
             } 
         } 
     } 
     let w = lo1 > 180 ? lo1 - 360 : lo1, e = (lo1 + (nx * dx)) > 180 ? (lo1 + (nx * dx)) - 360 : (lo1 + (nx * dx)); if (e <= w) e += 360; 
-    combinedOutputLayer = viewer.imageryLayers.addImageryProvider(new Cesium.SingleTileImageryProvider({ url: canvas.toDataURL(), rectangle: Cesium.Rectangle.fromDegrees(w, la1 - (ny * dy), e, la1) })); 
+    combinedOutputLayer = viewer.imageryLayers.addImageryProvider(new Cesium.SingleTileImageryProvider({ url: canvasT.toDataURL(), rectangle: Cesium.Rectangle.fromDegrees(w, la1 - (ny * dy), e, la1) })); 
     enforceLayerOrdering(); 
 } 
 

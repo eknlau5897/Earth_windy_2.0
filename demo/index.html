@@ -364,29 +364,36 @@ function toggleH9Satellite(isVisible) {
     if (h9SatelliteLayer) { viewer.imageryLayers.remove(h9SatelliteLayer); h9SatelliteLayer = null; } 
     if (!isVisible) return; 
     
-    // 1. Get current time and subtract exactly 50 minutes
+    // 1. Rollback time to 50 minutes ago
     const targetDate = new Date(); 
     targetDate.setMinutes(targetDate.getMinutes() - 50); 
     
-    // 2. Extract UTC components
+    // 2. Extra safety buffer: Geostationary feeds can suffer ingestion delays.
+    // If we are close to the turn of a 10-minute window, roll back an extra 10 mins to guarantee data availability.
+    if (targetDate.getUTCMinutes() % 10 < 3) {
+        targetDate.setMinutes(targetDate.getMinutes() - 10);
+    }
+    
+    // 3. Extract and pad UTC components cleanly
     const year = targetDate.getUTCFullYear();
     const month = String(targetDate.getUTCMonth() + 1).padStart(2, '0');
     const day = String(targetDate.getUTCDate()).padStart(2, '0');
     const hours = String(targetDate.getUTCHours()).padStart(2, '0');
     
-    // 3. Round down minutes to the nearest 10-minute interval to match GIBS timeline steps
+    // 4. Force a clean 10-minute interval step
     const rawMinutes = targetDate.getUTCMinutes();
     const roundedMinutes = String(Math.floor(rawMinutes / 10) * 10).padStart(2, '0');
     
-    const ymd = `${year}-${month}-${day}`;
-    const timestamp = `${ymd}T${hours}:${roundedMinutes}:00`;
+    const timestamp = `${year}-${month}-${day}T${hours}:${roundedMinutes}:00Z`;
+    console.log("Requesting Fixed Infrared Layer String:", timestamp); 
     
-    console.log("Fetching GIBS Satellite Timestamp:", timestamp); // Debug tracking
+    // 5. Instantiating the layer using the standard URL template string format
+    // This feeds the timestamp directly into the URL to bypass Cesium engine custom tag delays
+    const giBsUrl = `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/Himawari9_AHI_Clean_Infrared_Band13/default/${timestamp}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.png`;
     
-    // 4. Create the imagery provider with dynamic URL parameter string
     h9SatelliteLayer = viewer.imageryLayers.addImageryProvider(
         new Cesium.UrlTemplateImageryProvider({ 
-            url: `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/Himawari9_AHI_Clean_Infrared_Band13/default/${timestamp}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.png`, 
+            url: giBsUrl,
             maximumLevel: 9 
         })
     ); 

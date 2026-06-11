@@ -362,12 +362,15 @@ function toggleH9Satellite(isVisible) {
     if (h9SatelliteLayer) { viewer.imageryLayers.remove(h9SatelliteLayer); h9SatelliteLayer = null; } 
     if (!isVisible) return; 
     
+    // 1. Calculate past frame timeframe (Current Time - 50 Minutes)
     const targetDate = new Date(); 
     targetDate.setMinutes(targetDate.getMinutes() - 50); 
     
+    // 2. Add an ingestion fallback safeguard. 
+    // If we're right on the edge of a 10-minute slot, push back another 10 mins to prevent 404 cache responses.
     if (targetDate.getUTCMinutes() % 10 < 3) {
         targetDate.setMinutes(targetDate.getMinutes() - 10);
-    } 
+    }
     
     const year = targetDate.getUTCFullYear();
     const month = String(targetDate.getUTCMonth() + 1).padStart(2, '0');
@@ -375,20 +378,21 @@ function toggleH9Satellite(isVisible) {
     const hours = String(targetDate.getUTCHours()).padStart(2, '0');
     const roundedMinutes = String(Math.floor(targetDate.getUTCMinutes() / 10) * 10).padStart(2, '0');
     
+    // 3. Assemble the exact timestamp needed for sub-daily GIBS tracking
     const timestamp = `${year}-${month}-${day}T${hours}:${roundedMinutes}:00Z`;
-    console.log("WMTS Querying Payload Target:", timestamp); 
+    console.log("Requesting NASA GIBS Infrared Layer at timestamp:", timestamp); 
 
+    // 4. Force an explicit, lowercase parameters template to completely bypass Cesium's casing engine
     h9SatelliteLayer = viewer.imageryLayers.addImageryProvider(
-        new Cesium.WebMapTileServiceImageryProvider({
-            url: 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/wmts.cgi',
-            layer: 'Himawari9_AHI_Clean_Infrared_Band13',
-            style: 'default',
-            format: 'image/png',
-            tileMatrixSetID: 'GoogleMapsCompatible_Level9',
-            dimensions: { Time: timestamp },
-            tileWidth: 256,
-            tileHeight: 256,
-            minimumLevel: 0,
+        new Cesium.UrlTemplateImageryProvider({
+            url: 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/wmts.cgi?' +
+                 'Service=WMTS&Request=GetTile&Version=1.0.0&' +
+                 'layer=Himawari9_AHI_Clean_Infrared_Band13&' +
+                 'style=default&' +
+                 'tilematrixset=GoogleMapsCompatible_Level9&' +
+                 'TileMatrix={z}&TileRow={y}&TileCol={x}&' +
+                 'format=image/png&' +
+                 'time=' + timestamp, // Forcing explicit lowercase 'time=' query mapping
             maximumLevel: 9,
             tilingScheme: new Cesium.WebMercatorTilingScheme(),
             credit: new Cesium.Credit('NASA Global Imagery Browse Services')
@@ -396,7 +400,7 @@ function toggleH9Satellite(isVisible) {
     ); 
 
     enforceLayerOrdering(); 
-} 
+}
 
 function enforceLayerOrdering() { 
     if (currentBaseLayer) viewer.imageryLayers.lowerToBottom(currentBaseLayer); 

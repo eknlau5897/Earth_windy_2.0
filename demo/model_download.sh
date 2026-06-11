@@ -3,7 +3,7 @@ set -euo pipefail # Fail-fast shell architecture
 
 OUTPUT_DIR="./data"
 SCRATCH_DIR="./.tmp_scratch"
-CHECK_INTERVAL=10800 
+CHECK_INTERVAL=21600 
 
 # Repository structural targets
 BRANCH="main"
@@ -42,16 +42,14 @@ while true; do
         YESTERDAY=$(date -u -v-1d +"%Y-%m-%d")
     fi
 
-    if [ "$CURRENT_HOUR" -ge 6 ] && [ "$CURRENT_HOUR" -lt 12 ]; then
+    if [ "$CURRENT_HOUR" -ge 6 ] && [ "$CURRENT_HOUR" -lt 18 ]; then
         GFS_CYCLE="00"; GFS_DATE="${CURRENT_DATE} 00:00"
-    elif [ "$CURRENT_HOUR" -ge 12 ] && [ "$CURRENT_HOUR" -lt 18 ]; then
-        GFS_CYCLE="06"; GFS_DATE="${CURRENT_DATE} 06:00"
-    elif [ "$CURRENT_HOUR" -ge 18 ] && [ "$CURRENT_HOUR" -lt 23 ]; then
+    elif [ "$CURRENT_HOUR" -ge 18 ] && [ "$CURRENT_HOUR" -lt 24 ]; then
         GFS_CYCLE="12"; GFS_DATE="${CURRENT_DATE} 12:00"
     else
         GFS_CYCLE="18"
         if [ "$CURRENT_HOUR" -lt 6 ]; then
-            GFS_DATE="${YESTERDAY} 18:00"
+            GFS_DATE="${YESTERDAY} 12:00"
         else
             GFS_DATE="${CURRENT_DATE} 18:00"
         fi

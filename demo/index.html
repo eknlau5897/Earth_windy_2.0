@@ -105,8 +105,8 @@ for (let h = 132; h <= 240; h += 12) forecastHours.push(String(h).padStart(3, '0
 document.getElementById('timeSlider').max = forecastHours.length - 1; 
 
 let currentBaseLayer = null, h9SatelliteLayer = null, liveRadarLayer = null; 
-let velocityTextureLayer = null, precipTextureLayer = null, combinedOutputLayer = null; 
-let activeDataset = null, activePrecipDataset = null, webglWindCoastlineGeoJSON = null; 
+let velocityTextureLayer = null, combinedOutputLayer = null; 
+let activeDataset = null, webglWindCoastlineGeoJSON = null; 
 let currentUpdateToken = 0; 
 const cdnBase = `https://lc2nz3kv-5500.asse.devtunnels.ms/data`; 
 
@@ -116,7 +116,7 @@ const trackingLabel = document.createElement('div');
 trackingLabel.style.cssText = `position: absolute; background: rgba(10, 10, 14, 0.92); padding: 10px 14px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.15); color: #fff; font-family: monospace; font-size: 12px; pointer-events: none; display: none; z-index: 5000; box-shadow: 0 6px 20px rgba(0,0,0,0.6);`; 
 document.body.appendChild(trackingLabel); 
 
-// Palette configurations
+// Palette configuration
 const ncarCanvas = document.createElement('canvas'); ncarCanvas.width = 256; ncarCanvas.height = 1; 
 const ncarCtx = ncarCanvas.getContext('2d'); 
 const ncarGrad = ncarCtx.createLinearGradient(0, 0, 256, 0); 
@@ -130,33 +130,12 @@ ncarGrad.addColorStop(1.0, 'rgba(255, 0, 255, 0.95)');
 ncarCtx.fillStyle = ncarGrad; ncarCtx.fillRect(0, 0, 256, 1); 
 const ncarPalette = ncarCtx.getImageData(0, 0, 256, 1).data; 
 
-const nipyCanvas = document.createElement('canvas'); nipyCanvas.width = 256; nipyCanvas.height = 1; 
-const nipyCtx = nipyCanvas.getContext('2d'); 
-const nipyGrad = nipyCtx.createLinearGradient(0, 0, 256, 0); 
-nipyGrad.addColorStop(0.0, 'rgba(40, 40, 40, 0)'); 
-nipyGrad.addColorStop(0.02, 'rgba(100, 30, 150, 0.35)'); 
-nipyGrad.addColorStop(0.15, 'rgba(0, 0, 200, 0.55)'); 
-nipyGrad.addColorStop(0.35, 'rgba(0, 180, 50, 0.65)'); 
-nipyGrad.addColorStop(0.55, 'rgba(235, 235, 0, 0.75)'); 
-nipyGrad.addColorStop(0.75, 'rgba(230, 100, 0, 0.85)'); 
-nipyGrad.addColorStop(0.92, 'rgba(200, 0, 0, 0.9)'); 
-nipyGrad.addColorStop(1.0, 'rgba(254, 185, 215, 0.95)'); 
-nipyCtx.fillStyle = nipyGrad; nipyCtx.fillRect(0, 0, 256, 1); 
-const nipyPalette = nipyCtx.getImageData(0, 0, 256, 1).data; 
-
 function getNCARColor(speedMS) { 
     const knots = speedMS / 0.514444; 
     if (knots <= 0.5) return null; 
     let idx = Math.min(Math.floor((knots / 120) * 255), 255); 
     let pIdx = idx * 4; 
     return [ncarPalette[pIdx], ncarPalette[pIdx+1], ncarPalette[pIdx+2], ncarPalette[pIdx+3]]; 
-} 
-
-function getNipySpectralColor(mmRate) { 
-    if (mmRate < 0.1) return null; 
-    let idx = Math.min(Math.floor((mmRate / 100) * 255), 255); 
-    let pIdx = idx * 4; 
-    return [nipyPalette[pIdx], nipyPalette[pIdx+1], nipyPalette[pIdx+2], nipyPalette[pIdx+3]]; 
 } 
 
 // Vector system streams
@@ -283,22 +262,13 @@ function calculateOperationalBaseTime(modelType) {
     const utcHours = now.getUTCHours(); 
 
     if (modelType === 'cwawrf') {
-        // Precise Custom CWA Window Assignment Matching Your Matrix Requirements
-        if (utcHours >= 19) {
-            runHour = 12;
-        } else if (utcHours >= 13) {
-            runHour = 6;
-        } else if (utcHours >= 7) {
-            runHour = 0;
-        } else if (utcHours >= 1) {
-            runHour = 18;
-        } else {
-            // Midnight to 01Z bounds rolls straight back to yesterday's 18Z dataset index
+        if (utcHours >= 19) runHour = 12;
+        else if (utcHours >= 13) runHour = 6;
+        else if (utcHours >= 7) runHour = 0;
+        else if (utcHours >= 1) runHour = 18;
+        else {
             const yesterday = new Date(Date.UTC(runYear, runMonth, runDay - 1)); 
-            runYear = yesterday.getUTCFullYear(); 
-            runMonth = yesterday.getUTCMonth(); 
-            runDay = yesterday.getUTCDate(); 
-            runHour = 18;
+            runYear = yesterday.getUTCFullYear(); runMonth = yesterday.getUTCMonth(); runDay = yesterday.getUTCDate(); runHour = 18;
         }
     } else if (modelType === 'ecmwf' || modelType === 'aifs') { 
         if (utcHours >= 22) runHour = 12; 
@@ -312,8 +282,7 @@ function calculateOperationalBaseTime(modelType) {
         else if (utcHours >= 7) runHour = 0; 
         else { 
             const yesterday = new Date(Date.UTC(runYear, runMonth, runDay - 1)); 
-            runYear = yesterday.getUTCFullYear(); runMonth = yesterday.getUTCMonth(); runDay = yesterday.getUTCDate(); 
-            runHour = utcHours >= 0 ? 12 : 12; 
+            runYear = yesterday.getUTCFullYear(); runMonth = yesterday.getUTCMonth(); runDay = yesterday.getUTCDate(); runHour = 12; 
         } 
     } 
     return new Date(Date.UTC(runYear, runMonth, runDay, runHour)); 
@@ -330,6 +299,7 @@ function handleSliderChange(val) {
     updateWeatherLayers(); 
 } 
 
+// Map Canvas Provider Engine
 function changeBasemap(type) { 
     if (currentBaseLayer) viewer.imageryLayers.remove(currentBaseLayer); 
     let url = type === 'dark' ? 'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png' : 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'; 
@@ -380,52 +350,25 @@ function toggleH9Satellite(isVisible) {
         if (h9SatelliteLayer) { viewer.imageryLayers.remove(h9SatelliteLayer); h9SatelliteLayer = null; } 
         return; 
     } 
+    const targetDate = new Date(); targetDate.setUTCDate(targetDate.getUTCDate() - 1); 
+    const year = targetDate.getUTCFullYear(); const month = String(targetDate.getUTCMonth() + 1).padStart(2, '0'); const day = String(targetDate.getUTCDate()).padStart(2, '0'); 
+    const exactDateStr = `${year}-${month}-${day}`; 
 
-    const targetDate = new Date();
-    targetDate.setUTCDate(targetDate.getUTCDate() - 1); 
-
-    const year = targetDate.getUTCFullYear();
-    const month = String(targetDate.getUTCMonth() + 1).padStart(2, '0');
-    const day = String(targetDate.getUTCDate()).padStart(2, '0');
-    
-    const exactDateStr = `${year}-${month}-${day}`;
-    console.log("Loading NASA MODIS True Color Matrix For Baseline Date:", exactDateStr);
-
-    if (satLayerCache[exactDateStr]) {
-        if (h9SatelliteLayer && h9SatelliteLayer !== satLayerCache[exactDateStr]) {
-            h9SatelliteLayer.alpha = 0.0;
-        }
-        h9SatelliteLayer = satLayerCache[exactDateStr];
-        h9SatelliteLayer.alpha = 0.75;
-    } else {
-        const worldViewTrueColor = viewer.imageryLayers.addImageryProvider(
-            new Cesium.UrlTemplateImageryProvider({
-                url: 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/' +
-                     'MODIS_Terra_CorrectedReflectance_TrueColor/default/{time}/' +
-                     'GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg',
-                customTags: {
-                    time: function() { return exactDateStr; }
-                },
-                maximumLevel: 9,
-                tilingScheme: new Cesium.WebMercatorTilingScheme()
-            })
-        ); 
-
-        worldViewTrueColor.alpha = 0.75;
-        satLayerCache[exactDateStr] = worldViewTrueColor;
-
-        if (h9SatelliteLayer) {
-            h9SatelliteLayer.alpha = 0.0;
-        }
-        h9SatelliteLayer = worldViewTrueColor;
-    }
-
+    if (satLayerCache[exactDateStr]) { 
+        if (h9SatelliteLayer && h9SatelliteLayer !== satLayerCache[exactDateStr]) h9SatelliteLayer.alpha = 0.0; 
+        h9SatelliteLayer = satLayerCache[exactDateStr]; h9SatelliteLayer.alpha = 0.75; 
+    } else { 
+        const worldViewTrueColor = viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({ url: 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_CorrectedReflectance_TrueColor/default/{time}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg', customTags: { time: function() { return exactDateStr; } }, maximumLevel: 9, tilingScheme: new Cesium.WebMercatorTilingScheme() })); 
+        worldViewTrueColor.alpha = 0.75; satLayerCache[exactDateStr] = worldViewTrueColor; 
+        if (h9SatelliteLayer) h9SatelliteLayer.alpha = 0.0; 
+        h9SatelliteLayer = worldViewTrueColor; 
+    } 
     enforceLayerOrdering(); 
 } 
 
 function enforceLayerOrdering() { 
     if (currentBaseLayer) viewer.imageryLayers.lowerToBottom(currentBaseLayer); 
-    [velocityTextureLayer, precipTextureLayer, h9SatelliteLayer, liveRadarLayer, combinedOutputLayer].forEach(layer => { 
+    [velocityTextureLayer, h9SatelliteLayer, liveRadarLayer, combinedOutputLayer].forEach(layer => { 
         if (layer) viewer.imageryLayers.raiseToTop(layer); 
     }); 
 } 
@@ -440,40 +383,30 @@ async function fetchGzJson(url, token, callback) {
 
 function updateWeatherLayers() { 
     const localToken = ++currentUpdateToken; 
-    [velocityTextureLayer, precipTextureLayer, combinedOutputLayer].forEach(l => { if(l) viewer.imageryLayers.remove(l); }); 
-    velocityTextureLayer = precipTextureLayer = combinedOutputLayer = activeDataset = activePrecipDataset = null; 
+    [velocityTextureLayer, combinedOutputLayer].forEach(l => { if(l) viewer.imageryLayers.remove(l); }); 
+    velocityTextureLayer = combinedOutputLayer = activeDataset = null; 
 
     const model = document.getElementById('modelSelect').value; 
     const level = document.getElementById('levelSelect').value; 
     let sliderIdx = document.getElementById('timeSlider').value; 
     let targetHour = forecastHours[sliderIdx]; 
 
-    // Safety guard: Restrict CWA WRF to its maximum 84-hour frame
-    if (model === 'cwawrf' && parseInt(targetHour) > 84) {
-        const maxCwaIndex = forecastHours.indexOf("084");
-        document.getElementById('timeSlider').value = maxCwaIndex;
-        document.getElementById('hourVal').innerText = "084";
-        targetHour = "084";
-    }
+    if (model === 'cwawrf' && parseInt(targetHour) > 84) { 
+        const maxCwaIndex = forecastHours.indexOf("084"); 
+        document.getElementById('timeSlider').value = maxCwaIndex; 
+        document.getElementById('hourVal').innerText = "084"; 
+        targetHour = "084"; 
+    } 
 
     const activeWindSpeed = document.getElementById('showWindSpeed').checked; 
     const activeIsobars = document.getElementById('showIsobars').checked; 
-    const activePrecip = document.getElementById('showPrecip').checked; 
 
     updateValidTimeDisplay(model, targetHour); 
-
-    // Level enforcement rule: CWA WRF contains native surface vector metrics mapped directly to the 10m profile
-    let levelQueryStr = (model === 'cwawrf') ? '10m' : level;
+    let levelQueryStr = (model === 'cwawrf') ? '10m' : level; 
 
     if (activeWindSpeed || document.getElementById('showParticles').checked || document.getElementById('showCoastlines').checked) { 
         fetchGzJson(`${cdnBase}/${model}_${levelQueryStr}_f${targetHour}.json.gz`, localToken, data => { 
-            activeDataset = data; 
-            renderVelocityCanvasStack(data, activeWindSpeed); 
-        }); 
-    } 
-    if (activePrecip && model !== 'cwawrf') { 
-        fetchGzJson(`${cdnBase}/${model}_rain_f${targetHour}.json.gz`, localToken, data => { 
-            activePrecipDataset = data; renderPrecipitationTexture(data); 
+            activeDataset = data; renderVelocityCanvasStack(data, activeWindSpeed); 
         }); 
     } 
     if (activeIsobars && model !== 'cwawrf') { 
@@ -537,12 +470,12 @@ function getCellIntersections(x, y, vTL, vTR, vBL, vBR, iso) {
 
 const mouseHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas); 
 mouseHandler.setInputAction(function(movement) { 
-    if (!activeDataset && !activePrecipDataset) { trackingLabel.style.display = 'none'; return; } 
+    if (!activeDataset) { trackingLabel.style.display = 'none'; return; } 
     const cartesian = viewer.camera.pickEllipsoid(movement.endPosition, viewer.scene.globe.ellipsoid); 
     if (cartesian) { 
         const carto = Cesium.Cartographic.fromCartesian(cartesian); 
         let lon = Cesium.Math.toDegrees(carto.longitude), lat = Cesium.Math.toDegrees(carto.latitude); 
-        const header = activeDataset ? activeDataset[0].header : activePrecipDataset.header; 
+        const header = activeDataset[0].header; 
         
         if (lon < 0 && header.lo1 >= 0) lon += 360; 
         if (lon >= header.lo1 && lon <= header.lo2 && lat >= header.la2 && lat <= header.la1) { 
@@ -551,12 +484,9 @@ mouseHandler.setInputAction(function(movement) {
             const gridIdx = yIdx * header.nx + xIdx; 
 
             let html = `<strong>📍 Location Data</strong><br>Lat: ${lat.toFixed(2)}° | Lon: ${lon.toFixed(2)}°<br>`; 
-            if (activeDataset && gridIdx < activeDataset[0].data.length) { 
+            if (gridIdx < activeDataset[0].data.length) { 
                 const u = activeDataset[0].data[gridIdx], v = activeDataset[1].data[gridIdx], speed = Math.sqrt(u*u + v*v); 
                 html += `<hr style="border:0; border-top:1px solid rgba(255,255,255,0.1); margin:4px 0;"><strong>💨 Velocity Metrics</strong><br>Speed: ${(speed / 0.514444).toFixed(1)} knots (${speed.toFixed(1)} m/s)`; 
-            } 
-            if (activePrecipDataset && gridIdx < activePrecipDataset.data.length) { 
-                html += `<hr style="border:0; border-top:1px solid rgba(255,255,255,0.1); margin:4px 0;"><strong>🌧️ Forecast Accumulation</strong><br>Rate: ${activePrecipDataset.data[gridIdx].toFixed(2)} mm/6hr`; 
             } 
             trackingLabel.style.display = 'block'; trackingLabel.style.left = (movement.endPosition.x + 15) + 'px'; trackingLabel.style.top = (movement.endPosition.y + 15) + 'px'; trackingLabel.innerHTML = html; return; 
         } 

@@ -4,7 +4,7 @@ set -euo pipefail # Fail-fast shell architecture
 OUTPUT_DIR="./data"
 SCRATCH_DIR="./.tmp_scratch"
 CWA_INPUT_DIR="/Users/eknlau/Desktop/CWA/accu_rain/"  # Verified path
-CHECK_INTERVAL=21600 
+CHECK_INTERVAL=43200 
 
 # Repository structural targets
 BRANCH="main"

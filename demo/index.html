@@ -298,7 +298,7 @@ function toggleRealtimeRadar(isVisible) {
 // Pull composite bands from NASA Earthdata arrays
 function toggleH9Satellite(isVisible) {
     if (!isVisible) { if (h9SatelliteLayer) { viewer.imageryLayers.remove(h9SatelliteLayer); h9SatelliteLayer = null; } return; }
-    const targetDate = new Date(); targetDate.setUTCDate(targetDate.getUTCDate() - 1);
+    const targetDate = new Date(); targetDate.setUTCDate(targetDate.getUTCDate());
     const year = targetDate.getUTCFullYear(); const month = String(targetDate.getUTCMonth() + 1).padStart(2, '0'); const day = String(targetDate.getUTCDate()).padStart(2, '0');
     const exactDateStr = `${year}-${month}-${day}`;
     if(satLayerCache[exactDateStr]) {

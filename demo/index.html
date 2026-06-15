@@ -314,7 +314,7 @@ function fetchWebGLWindCoastlines() {
 
 function drawWebGLWindCoastlines(ctxT, width, height, header) { 
     if (!document.getElementById('showCoastlines').checked || !webglWindCoastlineGeoJSON) return; 
-    ctxT.save(); ctxT.lineWidth = 1.2; ctxT.strokeStyle = 'rgba(255,255,255,0.3)'; 
+    ctxT.save(); ctxT.lineWidth = 1.2; ctxT.strokeStyle = 'rgba(255,0,0,0.6)'; 
     const { lo1, la1, lo2, la2 } = header; 
     const lonRange = lo2 - lo1, latRange = la1 - la2; 
 
@@ -456,8 +456,8 @@ function renderIsobarContours(jsonData) {
     // Sweep across typical atmospheric sea-level pressure ranges (in Pascals)
     for (let p = 97000; p <= 104000; p += 400) { 
         // FIX: Set colors to an explicit bright red for high visibility over the dark canvas
-        ctxT.strokeStyle = 'rgba(255, 59, 48, 0.7)'; 
-        ctxT.fillStyle = 'rgba(255, 69, 58, 1.0)'; 
+        ctxT.strokeStyle = 'rgba(0, 0, 0, 0.7)'; 
+        ctxT.fillStyle = 'rgba(0, 0, 0, 1.0)'; 
         ctxT.font = 'bold 12px monospace'; 
         
         for (let y = 0; y < ny - 1; y++) { 

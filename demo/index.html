@@ -1,435 +1,433 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>Earth Windy 2.0 - Cesium Engine</title>
-    <script src="https://cesium.com/downloads/cesiumjs/releases/1.110/Build/Cesium/Cesium.js"></script>
-    <link href="https://cesium.com/downloads/cesiumjs/releases/1.110/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
-    <style>
-        html, body, #cesiumContainer {
-            width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden;
-            background-color: #000; font-family: monospace;
-        }
-        #controlPanel {
-            position: absolute; top: 15px; left: 15px; z-index: 1000;
-            background: rgba(10, 15, 28, 0.85); border: 1px solid #1e293b;
-            border-radius: 8px; padding: 15px; width: 310px; color: #f8fafc;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.5); backdrop-filter: blur(6px);
-        }
-        .control-group { margin-bottom: 12px; }
-        label { display: block; font-size: 11px; text-transform: uppercase; color: #94a3b8; margin-bottom: 4px; letter-spacing: 1px; }
-        select, input[type="range"] {
-            width: 100%; background: #1e293b; border: 1px solid #334155;
-            color: #fff; padding: 6px; border-radius: 4px; box-sizing: border-box;
-        }
-        .checkbox-container { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-top: 6px; }
-        .checkbox-container input { cursor: pointer; }
-        #timeDisplayPanel {
-            margin-top: 10px; padding-top: 10px; border-top: 1px solid #334155;
-            font-size: 12px; color: #38bdf8; display: flex; flex-direction: column; gap: 4px;
-        }
-        .time-label { color: #94a3b8; font-size: 11px; }
-    </style>
+<meta charset="UTF-8">
+<title>地球風場3D - 全球世界觀與臺灣 CWA WRF 整合版</title>
+<script src="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Cesium.js"></script>
+<link href="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
+<style>
+html, body, #cesiumContainer { width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; background-color: #000; }
+#controlPanel { position: absolute; top: 20px; left: 20px; width: 330px; max-height: 90vh; background: rgba(10, 10, 14, 0.88); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); padding: 22px; border-radius: 14px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #e4e4e7; z-index: 1000; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.75); border: 1px solid rgba(255, 255, 255, 0.08); overflow-y: auto; }
+h3 { margin-top: 0; font-size: 16px; font-weight: 600; border-bottom: 1px solid rgba(255, 255, 255, 0.1); padding-bottom: 12px; color: #fff; letter-spacing: 0.3px; }
+.control-group { margin-bottom: 18px; }
+.control-group label { display: block; font-size: 10px; font-weight: 700; text-transform: uppercase; color: #a1a1aa; margin-bottom: 4px; letter-spacing: 0.8px; }
+select { width: 100%; background: #1f1f23; color: #fff; border: 1px solid #2d2d34; padding: 10px 12px; border-radius: 7px; font-size: 13px; cursor: pointer; outline: none; }
+input[type="range"] { width: 100%; background: #2d2d34; height: 6px; border-radius: 3px; outline: none; -webkit-appearance: none; }
+input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #0a84ff; cursor: pointer; }
+.toggle-container { border-top: 1px solid rgba(255, 255, 255, 0.1); padding-top: 14px; margin-top: 12px; display: flex; flex-direction: column; gap: 10px; font-size: 12px; }
+.toggle-container label { cursor: pointer; display: flex; align-items: center; gap: 10px; font-weight: 500; }
+.toggle-container input[type="checkbox"] { width: 16px; height: 16px; accent-color: #0a84ff; cursor: pointer; }
+#legend{ position: absolute; bottom: 30px; right: 30px; background: rgba(10, 10, 14, 0.85); padding: 12px 16px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.08); font-family: monospace; font-size: 11px; color: #fff; z-index: 1000; pointer-events: none; display: none; }
+.valid-time-display { font-size: 11px; font-family: monospace; color: #38bdf8; margin-top: 6px; display: flex; flex-direction: column; gap: 2px; line-height: 1.4; }
+#particleCanvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 999; }
+</style>
 </head>
 <body>
-
 <div id="controlPanel">
-    <div class="control-group">
-        <label for="basemapSelect">Base Globe Theme</label>
-        <select id="basemapSelect" onchange="changeBasemapTheme()">
-            <option value="satellite">Photorealistic Satellite</option>
-            <option value="dark">World Dark Gray Canvas</option>
-        </select>
-    </div>
-
-    <div class="control-group">
-        <label for="modelSelect">Forecast Model Source</label>
-        <select id="modelSelect" onchange="updateWeatherLayers()">
-            <option value="gfs">Global Forecast System (GFS)</option>
-            <option value="ecmwf">ECMWF High-Res (IFS)</option>
-            <option value="aifs">ECMWF AI Forecast (AIFS)</option>
-            <option value="cwawrf">Taiwan CWA WRF (Regional)</option>
-        </select>
-    </div>
-
-    <div class="control-group">
-        <label for="levelSelect">Atmospheric Vertical Level</label>
-        <select id="levelSelect" onchange="updateWeatherLayers()">
-            <option value="10m">10 Meters Surface Layer</option>
-            <option value="850">850 hPa (~1,500m / Low-Jet)</option>
-            <option value="700">700 hPa (~3,000m / Moisture)</option>
-            <option value="500">500 hPa (~5,500m / Mid-Troposphere)</option>
-            <option value="200">200 hPa (~12,000m / Jetstream)</option>
-        </select>
-    </div>
-
-    <div class="control-group">
-        <label>Forecast Lead Window: +<span id="hourVal">000</span>hr</label>
-        <input id="timeSlider" type="range" min="0" max="49" value="0" step="1" oninput="updateWeatherLayers()">
-    </div>
-
-    <div class="checkbox-container">
-        <input type="checkbox" id="showWindSpeed" checked onchange="updateWeatherLayers()">
-        <label for="showWindSpeed" style="display:inline; color:#fff;">Overlay Wind Scalar Grid</label>
-    </div>
-    <div class="checkbox-container">
-        <input type="checkbox" id="showParticles" checked onchange="toggleParticles()">
-        <label for="showParticles" style="display:inline; color:#fff;">Animate Wind Particles</label>
-    </div>
-    <div class="checkbox-container">
-        <input type="checkbox" id="showIsobars" checked onchange="updateWeatherLayers()">
-        <label for="showIsobars" style="display:inline; color:#fff;">Overlay Red Isobar Contours</label>
-    </div>
-    <div class="checkbox-container">
-        <input type="checkbox" id="showRadar" checked onchange="updateWeatherLayers()">
-        <label for="showRadar" style="display:inline; color:#fff;">Enable RainViewer Radar</label>
-    </div>
-    <div class="checkbox-container">
-        <input type="checkbox" id="showCoastlines" checked onchange="toggleCoastlines()">
-        <label for="showCoastlines" style="display:inline; color:#fff;">High-Contrast Coastlines</label>
-    </div>
-
-    <div id="timeDisplayPanel">
-        <div><span class="time-label">CYCLE:</span> <span id="runTimeVal" style="color: #fff;">Loading...</span></div>
-        <div><span class="time-label">VALID:</span> <span id="validTimeVal">Loading...</span></div>
-    </div>
+<h3>地球風場3D</h3>
+<div class="control-group">
+<label>Forecast Model Core</label>
+<select id="modelSelect" onchange="updateWeatherLayers()">
+<option value="gfs">NCEP GFS (Global Forecast System)</option>
+<option value="ecmwf">ECMWF IFS (High-Resolution)</option>
+<option value="aifs">ECMWF AIFS (Artificial Intelligence)</option>
+<option value="cwawrf">Taiwan CWA WRF (Regional Mesoscale)</option>
+</select>
 </div>
-
+<div class="control-group">
+<label>Atmospheric Level Boundary</label>
+<select id="levelSelect" onchange="updateWeatherLayers()">
+<option value="10m">10-Meter Surface Boundary Layer</option>
+<option value="850">850 hPa (~1,500 m)</option>
+<option value="700">700 hPa (~2,500 m)</option>
+<option value="500">500 hPa (~5,500 m)</option>
+<option value="200">200 hPa (~12,000 m)</option>
+</select>
+</div>
+<div class="control-group">
+<label>Forecast Timeline: +<span id="hourVal">000</span> Hours</label>
+<input type="range" id="timeSlider" min="0" value="0" step="1" oninput="handleSliderChange(this.value)">
+<div class="valid-time-display" id="validTimePanel">
+    <div><span style="color:#a1a1aa;">CYCLE:</span> <span id="runTimeVal">Loading file matrix...</span></div>
+    <div><span style="color:#a1a1aa;">VALID:</span> <span id="validTimeVal">Loading file matrix...</span></div>
+</div>
+</div>
+<div class="control-group"><label>GIS Base Map Canvas</label>
+<select id="basemapSelect" onchange="changeBasemap(this.value)">
+<option value="dark">CartoDB Dark Matter</option>
+<option value="satellite">ArcGIS Satellite</option>
+</select>
+</div>
+<div class="toggle-container">
+<label><input type="checkbox" id="showCoastlines" checked onchange="updateWeatherLayers()"> WebGL-Wind Coastlines (White)</label>
+<label><input type="checkbox" id="showWindSpeed" checked onchange="updateWeatherLayers()"> NCAR Wind Speed Heatmap (0-120kt)</label>
+<label><input type="checkbox" id="showParticles" checked> High-Density Wind Particles (White Streamers)</label>
+<label><input type="checkbox" id="showIsobars" checked onchange="updateWeatherLayers()"> Pressure Isobars</label>
+<hr style="width:100%; border:0; border-top:1px solid rgba(255,255,255,0.1); margin: 5px 0;">
+<label><input type="checkbox" id="realtimeRadar" onchange="toggleRealtimeRadar(this.checked)"> 📡 Live Weather Radar (RainViewer)</label>
+<label><input type="checkbox" id="h9Satellite" onchange="toggleH9Satellite(this.checked)"> 🛰️ NASA Worldview (True Color Composite)</label>
+</div>
+</div>
+<div id="legend"></div>
 <div id="cesiumContainer"></div>
-
+<canvas id="particleCanvas"></canvas>
 <script>
-    const cdnBase = "../data"; 
-    let currentUpdateToken = 0;
+// Fix configuration variables to decouple dependencies from cloud accounts
+const viewer = new Cesium.Viewer('cesiumContainer', {
+    imageryProvider: false,
+    baseLayerPicker: false,
+    geocoder: false,
+    homeButton: true,
+    infoBox: false,
+    navigationHelpButton: false,
+    sceneModePicker: true,
+    timeline: false,
+    animation: false,
+    skyBox: false,
+    skyAtmosphere: false
+});
 
-    const forecastHours = [];
-    for (let h = 0; h <= 120; h += 6) { forecastHours.push(String(h).padStart(3, '0')); }
-    for (let h = 132; h <= 240; h += 12) { forecastHours.push(String(h).padStart(3, '0')); }
+const canvas = document.getElementById('particleCanvas');
+const ctx = canvas.getContext('2d');
+function resizeCanvas() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+window.addEventListener('resize', resizeCanvas); resizeCanvas();
 
-    // Pre-instantiated map tile layers
-    const satelliteProvider = new Cesium.ArcGisMapServerImageryProvider({
-        url: 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer'
-    });
-    const darkCanvasProvider = new Cesium.ArcGisMapServerImageryProvider({
-        url: 'https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer'
-    });
+const forecastHours = [];
+for (let h = 0; h <= 120; h += 6) forecastHours.push(String(h).padStart(3, '0'));
+for (let h = 132; h <= 240; h += 12) forecastHours.push(String(h).padStart(3, '0'));
+document.getElementById('timeSlider').max = forecastHours.length - 1;
 
-    // NO-TOKEN FIX: Explicit configuration parameters to isolate the map engine from Cesium Ion cloud servers
-    const viewer = new Cesium.Viewer('cesiumContainer', {
-        imageryProvider: satelliteProvider, // Inject our direct map provider instantly
-        geocoder: false, 
-        homeButton: false, 
-        sceneModePicker: false,
-        baseLayerPicker: false, 
-        navigationHelpButton: false, 
-        animation: false,
-        timeline: false, 
-        fullscreenButton: false,
-        skyBox: false,         // Bypasses Cesium server sky background dependencies
-        skyAtmosphere: false   // Disables global atmospheric shader fallback tracking
-    });
-    viewer.scene.globe.baseColor = Cesium.Color.BLACK;
+let currentBaseLayer = null, h9SatelliteLayer = null, liveRadarLayer = null;
+let velocityTextureLayer = null, combinedOutputLayer = null;
+let activeDataset = null, webglWindCoastlineGeoJSON = null;
+let currentUpdateToken = 0;
+const cdnBase = `https://lc2nz3kv-5500.asse.devtunnels.ms/data`;
+let satLayerCache = {};
 
-    // Direct reference tracking handle
-    let baseImageryLayer = viewer.imageryLayers.get(0);
+const trackingLabel = document.createElement('div'); 
+trackingLabel.style.cssText = `position: absolute; background: rgba(10, 10, 14, 0.92); padding: 10px 14px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.15); color: #fff; font-family: monospace; font-size: 12px; pointer-events: none; display: none; z-index: 5000; box-shadow: 0 6px 20px rgba(0,0,0,0.6);`;
+document.body.appendChild(trackingLabel);
 
-    let velocityTextureLayer = null;
-    let combinedOutputLayer = null;
-    let radarLayer = null;
-    let coastlineDataSource = null;
-    let activeDataset = null;
+// Palette configuration
+const ncarCanvas = document.createElement('canvas'); ncarCanvas.width = 256; ncarCanvas.height = 1;
+const ncarCtx = ncarCanvas.getContext('2d');
+const ncarGrad = ncarCtx.createLinearGradient(0, 0, 256, 0); 
+ncarGrad.addColorStop(0.0, 'rgba(0, 0, 128, 0)'); 
+ncarGrad.addColorStop(0.05, 'rgba(0, 0, 255, 0.4)'); 
+ncarGrad.addColorStop(0.25, 'rgba(0, 255, 255, 0.6)'); 
+ncarGrad.addColorStop(0.45, 'rgba(0, 255, 0, 0.7)'); 
+ncarGrad.addColorStop(0.65, 'rgba(255, 255, 0, 0.8)'); 
+ncarGrad.addColorStop(0.85, 'rgba(255, 0, 0, 0.9)'); 
+ncarGrad.addColorStop(1.0, 'rgba(255, 0, 255, 0.95)'); 
+ncarCtx.fillStyle = ncarGrad; ncarCtx.fillRect(0, 0, 256, 1);
+const ncarPalette = ncarCtx.getImageData(0, 0, 256, 1).data;
 
-    // --- Particle Animation Engine Variables ---
-    let particleCollection = [];
-    let particlePrimitives = null;
-    const MAX_PARTICLES = 7500; 
-    const PARTICLE_MAX_AGE = 40; 
-    let particleAnimationLoop = null;
+function getNCARColor(speedMS) {
+    const knots = speedMS / 0.514444;
+    if (knots <= 0.5) return null;
+    let idx = Math.min(Math.floor((knots / 120) * 255), 255);
+    let pIdx = idx * 4;
+    return [ncarPalette[pIdx], ncarPalette[pIdx+1], ncarPalette[pIdx+2], ncarPalette[pIdx+3]]; 
+}
 
-    initCoastlines();
+// Vector system streams
+let particles = [];
+const maxParticles = 7500;
+const particleMaxAge = 40;
+const speedScale = 0.08;
 
-    /**
-     * Safely textures the bottom layer to eliminate index array corruption crashes
-     */
-    function changeBasemapTheme() {
-        const theme = document.getElementById('basemapSelect').value;
-        
-        if (theme === 'satellite') {
-            baseImageryLayer.imageryProvider = satelliteProvider;
-        } else {
-            baseImageryLayer.imageryProvider = darkCanvasProvider;
-        }
-        
-        if (coastlineDataSource) {
-            coastlineDataSource.entities.values.forEach(entity => {
-                if (entity.polyline) {
-                    entity.polyline.material = (theme === 'satellite') 
-                        ? Cesium.Color.fromCssColorString('#ffffff').withAlpha(0.4)
-                        : Cesium.Color.fromCssColorString('#475569');
-                }
-            });
-        }
-        enforceLayerOrdering();
+function initParticles() { 
+    particles = [];
+    for (let i = 0; i < maxParticles; i++) { 
+        particles.push({ x: Math.random() * canvas.width, y: Math.random() * canvas.height, age: Math.floor(Math.random() * particleMaxAge) }); 
+    } 
+}
+
+function getGridValue(lon, lat) {
+    if(!activeDataset) return null;
+    const header = activeDataset[0].header;
+    let uData = activeDataset[0].data;
+    let vData = activeDataset[1].data;
+    let adjustedLon = lon;
+    if (header.lo1 >= 0 && lon < 0) adjustedLon += 360;
+    if (adjustedLon < header.lo1 || adjustedLon > header.lo2 || lat < header.la2 || lat > header.la1) { return null; }
+    const x = ((adjustedLon - header.lo1) / (header.lo2 - header.lo1)) * (header.nx - 1);
+    const y = ((header.la1 - lat) / (header.la1 - header.la2)) * (header.ny - 1);
+    const x0 = Math.floor(x);
+    const x1 = Math.min(x0 + 1, header.nx - 1);
+    const y0 = Math.floor(y);
+    const y1 = Math.min(y0 + 1, header.ny - 1);
+    const i00 = y0 * header.nx + x0;
+    const i10 = y0 * header.nx + x1;
+    const i01 = y1 * header.nx + x0;
+    const i11 = y1 * header.nx + x1;
+    const wx1 = x - x0;
+    const wx0 = 1 - wx1;
+    const wy1 = y - y0;
+    const wy0 = 1 - wy1;
+    const u = uData[i00]*wx0*wy0 + uData[i10]*wx1*wy0 + uData[i01]*wx0*wy1 + uData[i11]*wx1*wy1;
+    const v = vData[i00]*wx0*wy0 + vData[i10]*wx1*wy0 + vData[i01]*wx0*wy1 + vData[i11]*wx1*wy1;
+    return { u, v }; 
+}
+
+function updateAndDrawParticles() {
+    if (!document.getElementById('showParticles').checked || !activeDataset) { ctx.clearRect(0, 0, canvas.width, canvas.height); return; }
+    ctx.save(); ctx.fillStyle = "rgba(0, 0, 0, 0.92)"; ctx.globalCompositeOperation = "destination-in"; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.restore();
+    ctx.globalCompositeOperation = "source-over"; ctx.lineWidth = 1.2; ctx.strokeStyle = "rgba(255, 255, 255, 0.65)";
+    for(let i = 0; i < particles.length; i++) {
+        let p = particles[i];
+        if (p.age >= particleMaxAge) { p.x = Math.random() * canvas.width; p.y = Math.random() * canvas.height; p.age = 0; }
+        const cartesian = viewer.camera.pickEllipsoid(new Cesium.Cartesian2(p.x, p.y), viewer.scene.globe.ellipsoid);
+        if (!cartesian) { p.age = particleMaxAge; continue; }
+        const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
+        const lon = Cesium.Math.toDegrees(cartographic.longitude);
+        const lat = Cesium.Math.toDegrees(cartographic.latitude);
+        const wind = getGridValue(lon, lat);
+        if (!wind) { p.age = particleMaxAge; continue; }
+        const endLon = lon + wind.u * speedScale * 0.05;
+        const endLat = lat + wind.v * speedScale * 0.05;
+        const endCartesian = Cesium.Cartesian3.fromDegrees(endLon, endLat, cartographic.height);
+        const screenPos2 = viewer.scene.cartesianToCanvasCoordinates(endCartesian);
+        if(!screenPos2) { p.age = particleMaxAge; continue; }
+        const dx = screenPos2.x - p.x; const dy = screenPos2.y - p.y;
+        ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x + dx, p.y + dy); ctx.stroke();
+        p.x += dx; p.y += dy; p.age++;
+    } 
+}
+
+viewer.scene.preRender.addEventListener(function() { updateAndDrawParticles(); }); 
+initParticles();
+
+// NEW FIX: This function extracts true text string dates directly from JSON telemetry files
+function updateTrueTelemetryDisplay(header, targetHour) {
+    if (!header) return;
+    
+    // Fallback lookups across standard forecast daemon naming schemes
+    const rawRefTime = header.refTime || header.runtime || header.reftime;
+    const rawValidTime = header.validTime || header.validtime;
+    
+    let displayRun = "N/A";
+    let displayValid = "N/A";
+    
+    if (rawRefTime) {
+        // Clean trailing offsets or timestamps if they exist
+        displayRun = String(rawRefTime).replace(".000Z", "Z").replace("T", " ");
     }
-
-    function updateMetadataTimeDisplay(header) {
-        if (!header) return;
-        const runTime = header.refTime || header.runtime || "N/A";
-        const validTime = header.validTime || header.validtime || "N/A";
-        document.getElementById('runTimeVal').innerText = runTime;
-        document.getElementById('validTimeVal').innerText = validTime;
-    }
-
-    function fetchGzJson(url, token, successCallback) {
-        fetch(url)
-            .then(res => { if (!res.ok) throw new Error("Network error"); return res.arrayBuffer(); })
-            .then(buf => {
-                if (token !== currentUpdateToken) return;
-                const decompressed = pako.ungzip(new Uint8Array(buf), { to: 'string' });
-                successCallback(JSON.parse(decompressed));
-            })
-            .catch(err => console.log(`Data fetch issue: ${err.message}`));
-    }
-
-    function updateWeatherLayers() { 
-        const localToken = ++currentUpdateToken; 
-        
-        if (velocityTextureLayer) { viewer.imageryLayers.remove(velocityTextureLayer); velocityTextureLayer = null; }
-        if (combinedOutputLayer) { viewer.imageryLayers.remove(combinedOutputLayer); combinedOutputLayer = null; }
-        if (radarLayer) { viewer.imageryLayers.remove(radarLayer); radarLayer = null; }
-        
-        activeDataset = null; 
-        clearParticleEngine();
-
-        const model = document.getElementById('modelSelect').value; 
-        const level = document.getElementById('levelSelect').value; 
-        let sliderIdx = document.getElementById('timeSlider').value; 
-        let targetHour = forecastHours[sliderIdx]; 
-        
-        document.getElementById('hourVal').innerText = targetHour;
-
-        if (model === 'cwawrf' && parseInt(targetHour) > 84) { 
-            const maxCwaIndex = forecastHours.indexOf("084"); 
-            document.getElementById('timeSlider').value = maxCwaIndex; 
-            document.getElementById('hourVal').innerText = "084"; 
-            targetHour = "084"; 
-        } 
-
-        const activeWindSpeed = document.getElementById('showWindSpeed').checked; 
-        const activeIsobars = document.getElementById('showIsobars').checked; 
-        const activeRadar = document.getElementById('showRadar').checked;
-
-        if (activeWindSpeed || document.getElementById('showParticles').checked) { 
-            fetchGzJson(`${cdnBase}/${model}_${level}_f${targetHour}.json.gz`, localToken, data => { 
-                activeDataset = data; 
-                if (data && data[0] && data[0].header) { updateMetadataTimeDisplay(data[0].header); }
-                renderVelocityCanvasStack(data, activeWindSpeed); 
-                if (document.getElementById('showParticles').checked) { initParticleEngine(data); }
-            }); 
-        } 
-        
-        if (activeIsobars && model !== 'cwawrf') { 
-            fetchGzJson(`${cdnBase}/${model}_mslp_f${targetHour}.json.gz`, localToken, data => {
-                if (data && data.header && !activeWindSpeed) { updateMetadataTimeDisplay(data.header); }
-                renderIsobarContours(data);
-            }); 
-        } 
-
-        if (activeRadar) updateRadarOverlay();
-    }
-
-    // --- DYNAMIC WIND PARTICLE SIMULATION ENGINE ---
-    function initParticleEngine(windData) {
-        clearParticleEngine();
-        if (!windData || !windData[0]) return;
-
-        const uField = windData[0];
-        const { lo1, la1, nx, ny, dx, dy } = uField.header;
-        
-        let w = lo1 > 180 ? lo1 - 360 : lo1;
-        let e = w + (nx * dx);
-        let n = la1;
-        let s = la1 - (ny * dy);
-
-        particlePrimitives = viewer.scene.primitives.add(new Cesium.PointPrimitiveCollection());
-
-        for (let i = 0; i < MAX_PARTICLES; i++) {
-            const lon = w + Math.random() * (e - w);
-            const lat = s + Math.random() * (n - s);
-            
-            const pt = particlePrimitives.add({
-                position: Cesium.Cartesian3.fromDegrees(lon, lat, 15000),
-                color: Cesium.Color.WHITE.withAlpha(0.8),
-                pointSize: 2.5 
-            });
-
-            particleCollection.push({
-                primitive: pt, lon: lon, lat: lat, age: Math.floor(Math.random() * PARTICLE_MAX_AGE)
-            });
-        }
-
-        particleAnimationLoop = setInterval(() => {
-            const uData = windData[0].data;
-            const vData = windData[1].data;
-
-            for (let i = 0; i < particleCollection.length; i++) {
-                const p = particleCollection[i];
-                p.age++;
-
-                let xIdx = Math.floor(((p.lon - w) / (e - w)) * nx);
-                let yIdx = Math.floor(((n - p.lat) / (n - s)) * ny);
-                let dataIdx = yIdx * nx + xIdx;
-
-                if (xIdx >= 0 && xIdx < nx && yIdx >= 0 && yIdx < ny && p.age < PARTICLE_MAX_AGE && uData[dataIdx] !== undefined) {
-                    const u = uData[dataIdx];
-                    const v = vData[dataIdx];
-                    
-                    p.lon += (u * 0.00012); 
-                    p.lat += (v * 0.00012);
-                    
-                    p.primitive.position = Cesium.Cartesian3.fromDegrees(p.lon, p.lat, 15000);
-                    
-                    let alpha = 1.0 - (p.age / PARTICLE_MAX_AGE);
-                    p.primitive.color = Cesium.Color.WHITE.withAlpha(alpha * 0.9);
-                } else {
-                    p.lon = w + Math.random() * (e - w);
-                    p.lat = s + Math.random() * (n - s);
-                    p.age = 0;
-                    p.primitive.position = Cesium.Cartesian3.fromDegrees(p.lon, p.lat, 15000);
-                    p.primitive.color = Cesium.Color.WHITE.withAlpha(0.8);
-                }
-            }
-        }, 30);
-    }
-
-    function clearParticleEngine() {
-        if (particleAnimationLoop) clearInterval(particleAnimationLoop);
-        if (particlePrimitives) { viewer.scene.primitives.remove(particlePrimitives); }
-        particleCollection = [];
-        particlePrimitives = null;
-    }
-
-    function toggleParticles() {
-        if (document.getElementById('showParticles').checked) {
-            if (activeDataset) initParticleEngine(activeDataset);
-            else updateWeatherLayers();
-        } else {
-            clearParticleEngine();
+    
+    if (rawValidTime) {
+        displayValid = String(rawValidTime).replace(".000Z", "Z").replace("T", " ");
+    } else if (rawRefTime && targetHour) {
+        // Fallback math calculation if the validTime key is completely absent
+        try {
+            const baseDate = new Date(rawRefTime);
+            baseDate.setUTCHours(baseDate.getUTCHours() + parseInt(targetHour, 10));
+            displayValid = baseDate.toISOString().replace(".000Z", "Z").replace("T", " ");
+        } catch(e) {
+            displayValid = `+${targetHour}hr Offset`;
         }
     }
+    
+    document.getElementById('runTimeVal').innerText = displayRun;
+    document.getElementById('validTimeVal').innerText = displayValid;
+}
 
-    function updateRadarOverlay() {
-        fetch('https://api.rainviewer.com/public/maps.json')
-            .then(res => res.json())
-            .then(timestamps => {
-                if (!timestamps || timestamps.length === 0) return;
-                const latestRadarTime = timestamps[timestamps.length - 1];
-                radarLayer = viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
-                    url: `https://tilecache.rainviewer.com/v2/radar/${latestRadarTime}/256/{z}/{x}/{y}/2/1_1.png`,
-                    minimumLevel: 0, maximumLevel: 12
-                }));
-                enforceLayerOrdering();
-            }).catch(err => console.error("Radar sync error:", err));
-    }
+function handleSliderChange(val) {
+    document.getElementById('hourVal').innerText = forecastHours[val]; 
+    updateWeatherLayers(); 
+}
 
-    // URL FIX: Swapped out broken 404 URL with an updated high-performance vector coastline CDN link
-    function initCoastlines() {
-        Cesium.GeoJsonDataSource.load('https://cdn.jsdelivr.net/gh/nvkelso/natural-earth-vector@master/geojson/ne_110m_coastline.geojson', {
-            stroke: Cesium.Color.fromCssColorString('#ffffff').withAlpha(0.4), fill: Cesium.Color.TRANSPARENT, strokeWidth: 1.5
-        }).then(dataSource => {
-            coastlineDataSource = dataSource; 
-            viewer.dataSources.add(dataSource);
+function changeBasemap(type) {
+    if (currentBaseLayer) viewer.imageryLayers.remove(currentBaseLayer);
+    let url = type === 'dark' ? 'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png' : 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'; 
+    currentBaseLayer = viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({ url })); 
+    viewer.imageryLayers.lowerToBottom(currentBaseLayer); 
+}
+
+function fetchWebGLWindCoastlines() { 
+    fetch('https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_110m_coastline.geojson') 
+    .then(res => res.json()).then(data => { webglWindCoastlineGeoJSON = data; updateWeatherLayers(); }); 
+}
+
+function drawWebGLWindCoastlines(ctxT, width, height, header) {
+    if (!document.getElementById('showCoastlines').checked || !webglWindCoastlineGeoJSON) return;
+    ctxT.save(); ctxT.lineWidth = 1.2; ctxT.strokeStyle = 'rgba(255,255,255,0.3)';
+    const { lo1, la1, lo2, la2 } = header; const lonRange = lo2 - lo1, latRange = la1 - la2;
+    webglWindCoastlineGeoJSON.features.forEach(f => {
+        const line = f.geometry.coordinates; let firstPoint = true, lastX = null; ctxT.beginPath();
+        line.forEach(pt => {
+            let lon = pt[0]; const lat = pt[1]; if (lo1 >= 0 && lon < 0) lon += 360;
+            const x = ((lon - lo1) / lonRange) * width, y = ((la1 - lat) / latRange) * height;
+            if (!firstPoint && lastX !== null && Math.abs(x - lastX) > width * 0.5) ctxT.moveTo(x, y);
+            else firstPoint ? ctxT.moveTo(x, y) : ctxT.lineTo(x, y);
+            firstPoint = false; lastX = x;
+        }); ctxT.stroke();
+    }); ctxT.restore(); 
+}
+
+function toggleRealtimeRadar(isVisible) {
+    if (liveRadarLayer) { viewer.imageryLayers.remove(liveRadarLayer); liveRadarLayer = null; }
+    if (!isVisible) return;
+    fetch('https://api.rainviewer.com/public/weather-maps.json').then(res => res.json()).then(data => {
+        if(data?.radar?.past?.length > 0) {
+            liveRadarLayer = viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({ url: `${data.host}${data.radar.past[data.radar.past.length - 1].path}/256/{z}/{x}/{y}/2/1_1.png`, maximumLevel: 7 }));
             enforceLayerOrdering();
-        }).catch(err => {
-            console.warn("Coastline vector mirror failed to load:", err);
+        }
+    }); 
+}
+
+function toggleH9Satellite(isVisible) {
+    if (!isVisible) { if (h9SatelliteLayer) { viewer.imageryLayers.remove(h9SatelliteLayer); h9SatelliteLayer = null; } return; }
+    const targetDate = new Date(); targetDate.setUTCDate(targetDate.getUTCDate() - 1);
+    const year = targetDate.getUTCFullYear(); const month = String(targetDate.getUTCMonth() + 1).padStart(2, '0'); const day = String(targetDate.getUTCDate()).padStart(2, '0');
+    const exactDateStr = `${year}-${month}-${day}`;
+    if(satLayerCache[exactDateStr]) {
+        if (h9SatelliteLayer && h9SatelliteLayer !== satLayerCache[exactDateStr]) h9SatelliteLayer.alpha = 0.0;
+        h9SatelliteLayer = satLayerCache[exactDateStr]; h9SatelliteLayer.alpha = 0.75;
+    } else {
+        const worldViewTrueColor = viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({ url: 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_CorrectedReflectance_TrueColor/default/{time}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg', customTags: { time: function() { return exactDateStr; } }, maximumLevel: 9, tilingScheme: new Cesium.WebMercatorTilingScheme() }));
+        worldViewTrueColor.alpha = 0.75; satLayerCache[exactDateStr] = worldViewTrueColor;
+        if (h9SatelliteLayer) h9SatelliteLayer.alpha = 0.0; h9SatelliteLayer = worldViewTrueColor;
+    } enforceLayerOrdering(); 
+}
+
+function enforceLayerOrdering() {
+    if (currentBaseLayer) viewer.imageryLayers.lowerToBottom(currentBaseLayer);
+    [velocityTextureLayer, h9SatelliteLayer, liveRadarLayer, combinedOutputLayer].forEach(layer => { if (layer) viewer.imageryLayers.raiseToTop(layer); }); 
+}
+
+async function fetchGzJson(url, token, callback) {
+    try {
+        const res = await fetch(url);
+        if (!res.ok) return;
+        const buf = await res.arrayBuffer();
+        if (token === currentUpdateToken) callback(JSON.parse(pako.inflate(new Uint8Array(buf), { to: 'string' })));
+    } catch(e) {} 
+}
+
+function updateWeatherLayers() {
+    const localToken = ++currentUpdateToken;
+    [velocityTextureLayer, combinedOutputLayer].forEach(l => { if(l) viewer.imageryLayers.remove(l); });
+    velocityTextureLayer = combinedOutputLayer = activeDataset = null;
+    
+    const model = document.getElementById('modelSelect').value;
+    const level = document.getElementById('levelSelect').value;
+    let sliderIdx = document.getElementById('timeSlider').value;
+    let targetHour = forecastHours[sliderIdx];
+    
+    if (model === 'cwawrf' && parseInt(targetHour) > 84) {
+        const maxCwaIndex = forecastHours.indexOf("084");
+        document.getElementById('timeSlider').value = maxCwaIndex;
+        document.getElementById('hourVal').innerText = "084";
+        targetHour = "084";
+    }
+    
+    const activeWindSpeed = document.getElementById('showWindSpeed').checked;
+    const activeIsobars = document.getElementById('showIsobars').checked;
+    
+    let levelQueryStr = level;
+    if(activeWindSpeed || document.getElementById('showParticles').checked || document.getElementById('showCoastlines').checked) {
+        fetchGzJson(`${cdnBase}/${model}_${levelQueryStr}_f${targetHour}.json.gz`, localToken, data => {
+            activeDataset = data;
+            // FIXED: Dynamically capture layout arrays straight out of files
+            if (data && data[0] && data[0].header) {
+                updateTrueTelemetryDisplay(data[0].header, targetHour);
+            }
+            renderVelocityCanvasStack(data, activeWindSpeed);
         });
     }
-
-    function toggleCoastlines() {
-        if (coastlineDataSource) coastlineDataSource.show = document.getElementById('showCoastlines').checked;
+    
+    if (activeIsobars && model !== 'cwawrf') {
+        fetchGzJson(`${cdnBase}/${model}_mslp_f${targetHour}.json.gz`, localToken, data => {
+            // FIXED: If wind fields are disabled, use pressure files to capture time tags
+            if (data && data.header && !activeWindSpeed) {
+                updateTrueTelemetryDisplay(data.header, targetHour);
+            }
+            renderIsobarContours(data);
+        });
     }
+}
 
-    function renderVelocityCanvasStack(windData, showScalarGrid) {
-        if (!windData || !windData[0] || !showScalarGrid) return;
-        const uField = windData[0]; const vField = windData[1];
-        const { nx, ny, lo1, la1, dx, dy } = uField.header;
+function renderVelocityCanvasStack(jsonData, drawHeatmap) {
+    const uData = jsonData[0].data, vData = jsonData[1].data, header = jsonData[0].header;
+    const { nx, ny, lo1, la1, lo2, la2 } = header;
+    const canvasT = document.createElement('canvas'); canvasT.width = nx; canvasT.height = ny;
+    const ctxT = canvasT.getContext('2d');
+    if (drawHeatmap) {
+        const imgData = ctxT.createImageData(nx, ny);
+        for (let i = 0; i < uData.length; i++) {
+            const cIdx = i * 4, speed = Math.sqrt(uData[i]*uData[i] + vData[i]*vData[i]), color = getNCARColor(speed);
+            if (color) { imgData.data[cIdx] = color[0]; imgData.data[cIdx+1] = color[1]; imgData.data[cIdx+2] = color[2]; imgData.data[cIdx+3] = color[3]; }
+        } ctxT.putImageData(imgData, 0, 0);
+    } drawWebGLWindCoastlines(ctxT, nx, ny, header);
+    let w = lo1 > 180 ? lo1 - 360 : lo1, e = lo2 > 180 ? lo2 - 360 : lo2; if (e <= w) e += 360;
+    velocityTextureLayer = viewer.imageryLayers.addImageryProvider(new Cesium.SingleTileImageryProvider({ url: canvasT.toDataURL(), rectangle: Cesium.Rectangle.fromDegrees(w, la2, e, la1) }));
+    enforceLayerOrdering();
+}
 
-        const canvas = document.createElement('canvas'); canvas.width = nx; canvas.height = ny;
-        const ctx = canvas.getContext('2d'); const imgData = ctx.createImageData(nx, ny);
-
-        for (let y = 0; y < ny; y++) {
-            for (let x = 0; x < nx; x++) {
-                const idx = y * nx + x;
-                const speed = Math.sqrt(uField.data[idx]**2 + vField.data[idx]**2);
-                const alpha = Math.min(speed / 45.0, 1.0);
-                const pIdx = idx * 4;
-                imgData.data[pIdx] = Math.round(alpha * 200);
-                imgData.data[pIdx+1] = Math.round(Math.max(0, 1.0 - alpha) * 100);
-                imgData.data[pIdx+2] = 220;
-                imgData.data[pIdx+3] = Math.round(alpha * 110); 
+function renderIsobarContours(jsonData) {
+    const { data, header } = jsonData, { nx, ny, lo1, la1, dx, dy } = header;
+    const canvasT = document.createElement('canvas'); canvasT.width = 2048; canvasT.height = 1024;
+    const ctxT = canvasT.getContext('2d'); ctxT.lineWidth = 1.2; ctxT.textBaseline = 'middle'; ctxT.textAlign = 'center';
+    for (let p = 97000; p <= 104000; p += 400) {
+        ctxT.strokeStyle = 'rgba(255, 255, 255, 0.4)'; ctxT.fillStyle = 'rgba(255, 255, 255, 0.6)'; ctxT.font = '11px sans-serif';
+        for (let y = 0; y < ny - 1; y++) {
+            for (let x = 0; x < nx - 1; x++) {
+                const i = y * nx + x; const pts = getCellIntersections(x, y, data[i], data[i+1], data[i+nx], data[i+nx+1], p);
+                if (pts.length >= 2) {
+                    const x1 = (pts[0].x / nx) * canvasT.width, y1 = (pts[0].y / ny) * canvasT.height;
+                    const x2 = (pts[1].x / nx) * canvasT.width, y2 = (pts[1].y / ny) * canvasT.height;
+                    if (x % 45 === 0 && y % 45 === 0) ctxT.fillText(String(Math.round(p/100)), x1, y1);
+                    else { ctxT.beginPath(); ctxT.moveTo(x1, y1); ctxT.lineTo(x2, y2); ctxT.stroke(); } // FIXED: Appended context instance binding prefix to fix silent crash
+                }
             }
         }
-        ctx.putImageData(imgData, 0, 0);
-
-        let w = lo1 > 180 ? lo1 - 360 : lo1;
-        let e = w + (nx * dx); if (e <= w) e += 360;
-
-        velocityTextureLayer = viewer.imageryLayers.addImageryProvider(new Cesium.SingleTileImageryProvider({
-            url: canvas.toDataURL(), rectangle: Cesium.Rectangle.fromDegrees(w, la1 - (ny * dy), e, la1)
-        }));
-        enforceLayerOrdering();
     }
+    let w = lo1 > 180 ? lo1 - 360 : lo1, e = (lo1 + (nx * dx)) > 180 ? (lo1 + (nx * dx)) - 360 : (lo1 + (nx * dx)); if (e <= w) e += 360;
+    combinedOutputLayer = viewer.imageryLayers.addImageryProvider(new Cesium.SingleTileImageryProvider({ url: canvasT.toDataURL(), rectangle: Cesium.Rectangle.fromDegrees(w, la1 - (ny * dy), e, la1) }));
+    enforceLayerOrdering();
+}
 
-    function renderIsobarContours(jsonData) { 
-        if (!jsonData || !jsonData.data) return;
-        const { data, header } = jsonData; const { nx, ny, lo1, la1, dx, dy } = header; 
-        
-        const canvasT = document.createElement('canvas'); canvasT.width = 2048; canvasT.height = 1024;
-        const ctxT = canvasT.getContext('2d'); ctxT.lineWidth = 1.4; ctxT.textBaseline = 'middle'; ctxT.textAlign = 'center'; 
+function getCellIntersections(x, y, vTL, vTR, vBL, vBR, iso) {
+    let pts = [];
+    if ((vTL >= iso) !== (vTR >= iso)) pts.push({ x: x + (iso - vTL) / (vTR - vTL), y });
+    if ((vBL >= iso) !== (vBR >= iso)) pts.push({ x: x + (iso - vBL) / (vBR - vBL), y: y + 1});
+    if ((vTL >= iso) !== (vBL >= iso)) pts.push({ x, y: y + (iso - vTL) / (vBL - vTL) });
+    if ((vTR >= iso) !== (vBR >= iso)) pts.push({ x: x + 1, y: y + (iso - vTR) / (vBR - vTR) });
+    return pts;
+}
 
-        for (let p = 97000; p <= 104000; p += 400) { 
-            ctxT.strokeStyle = 'rgba(255, 59, 48, 0.7)'; ctxT.fillStyle = 'rgba(255, 69, 58, 1.0)'; ctxT.font = 'bold 12px monospace'; 
-            
-            for (let y = 0; y < ny - 1; y++) { 
-                for (let x = 0; x < nx - 1; x++) { 
-                    const i = y * nx + x; 
-                    const pts = getCellIntersections(x, y, data[i], data[i+1], data[i+nx], data[i+nx+1], p); 
-                    if (pts.length >= 2) { 
-                        const x1 = (pts[0].x / nx) * canvasT.width; const y1 = (pts[0].y / ny) * canvasT.height; 
-                        const x2 = (pts[1].x / nx) * canvasT.width; const y2 = (pts[1].y / ny) * canvasT.height; 
-                        
-                        if (x % 50 === 0 && y % 50 === 0) { ctxT.fillText(String(Math.round(p / 100)), x1, y1); } 
-                        else { ctxT.beginPath(); ctxT.moveTo(x1, y1); ctxT.lineTo(x2, y2); ctxT.stroke(); } 
-                    } 
-                } 
-            } 
-        } 
-        let w = lo1 > 180 ? lo1 - 360 : lo1; let e = w + (nx * dx); if (e <= w) e += 360; 
-        combinedOutputLayer = viewer.imageryLayers.addImageryProvider(new Cesium.SingleTileImageryProvider({ 
-            url: canvasT.toDataURL(), rectangle: Cesium.Rectangle.fromDegrees(w, la1 - (ny * dy), e, la1) 
-        })); 
-        enforceLayerOrdering(); 
+const mouseHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+mouseHandler.setInputAction(function(movement) {
+    if(!activeDataset) { trackingLabel.style.display = 'none'; return; }
+    const cartesian = viewer.camera.pickEllipsoid(movement.endPosition, viewer.scene.globe.ellipsoid);
+    if (cartesian) {
+        const carto = Cesium.Cartographic.fromCartesian(cartesian);
+        let lon = Cesium.Math.toDegrees(carto.longitude), lat = Cesium.Math.toDegrees(carto.latitude);
+        const header = activeDataset[0].header;
+        if (lon < 0 && header.lo1 >= 0) lon += 360;
+        if (lon >= header.lo1 && lon <= header.lo2 && lat >= header.la2 && lat <= header.la1) {
+            const xIdx = Math.floor(((lon - header.lo1) / (header.lo2 - header.lo1)) * header.nx);
+            const yIdx = Math.floor(((header.la1 - lat) / (header.la1 - header.la2)) * header.ny);
+            const gridIdx = yIdx * header.nx + xIdx;
+            let html = `<strong>📍 Location Data</strong><br>Lat: ${lat.toFixed(2)}° | Lon: ${lon.toFixed(2)}°<br>`;
+            if (gridIdx < activeDataset[0].data.length) {
+                const u = activeDataset[0].data[gridIdx], v = activeDataset[1].data[gridIdx], speed = Math.sqrt(u*u + v*v);
+                html += `<hr style="border:0; border-top:1px solid rgba(255,255,255,0.1); margin:4px 0;"><strong>💨 Velocity Metrics</strong><br>Speed: ${(speed / 0.514444).toFixed(1)} knots (${speed.toFixed(1)} m/s)`;
+            }
+            trackingLabel.style.display = 'block';
+            trackingLabel.style.left = (movement.endPosition.x + 15) + 'px';
+            trackingLabel.style.top = (movement.endPosition.y + 15) + 'px';
+            trackingLabel.innerHTML = html;
+            return;
+        }
     }
+    trackingLabel.style.display = 'none';
+}, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
-    function getCellIntersections(x, y, v00, v10, v01, v11, target) {
-        const pts = [];
-        if ((v00 >= target && v10 < target) || (v00 < target && v10 >= target)) { let t = (target - v00) / (v10 - v00); pts.push({ x: x + t, y: y }); }
-        if ((v10 >= target && v11 < target) || (v10 < target && v11 >= target)) { let t = (target - v10) / (v11 - v10); pts.push({ x: x + 1, y: y + t }); }
-        if ((v01 >= target && v11 < target) || (v01 < target && v11 >= target)) { let t = (target - v01) / (v11 - v01); pts.push({ x: x + t, y: y + 1 }); }
-        if ((v00 >= target && v01 < target) || (v00 < target && v01 >= target)) { let t = (target - v00) / (v01 - v00); pts.push({ x: x, y: y + t }); }
-        return pts;
-    }
-
-    // ORDERING FIX: Forces structural composition stack alignment under particle layers
-    function enforceLayerOrdering() {
-        if (baseImageryLayer) viewer.imageryLayers.lowerToBottom(baseImageryLayer);
-        if (velocityTextureLayer) viewer.imageryLayers.raiseToTop(velocityTextureLayer);
-        if (radarLayer) viewer.imageryLayers.raiseToTop(radarLayer);
-        if (combinedOutputLayer) viewer.imageryLayers.raiseToTop(combinedOutputLayer);
-        if (coastlineDataSource) viewer.dataSources.raiseToTop(coastlineDataSource);
-    }
-
-    updateWeatherLayers();
+changeBasemap('dark');
+fetchWebGLWindCoastlines();
+viewer.camera.setView({ destination: Cesium.Cartesian3.fromDegrees(121.5, 24.0, 3000000), orientation: { heading: Cesium.Math.toRadians(0.0), pitch: Cesium.Math.toRadians(-90.0) } });
 </script>
 </body>
 </html>

@@ -456,8 +456,8 @@ function renderIsobarContours(jsonData) {
     // Sweep across typical atmospheric sea-level pressure ranges (in Pascals)
     for (let p = 97000; p <= 104000; p += 400) { 
         // FIX: Set colors to an explicit bright red for high visibility over the dark canvas
-        ctxT.strokeStyle = 'rgba(0, 0, 0, 0.7)'; 
-        ctxT.fillStyle = 'rgba(0, 0, 0, 1.0)'; 
+        ctxT.strokeStyle = 'rgba(255, 255, 255, 0.7)'; 
+        ctxT.fillStyle = 'rgba(255, 255, 255, 1.0)'; 
         ctxT.font = 'bold 12px monospace'; 
         
         for (let y = 0; y < ny - 1; y++) { 

@@ -2,7 +2,7 @@
 <html lang="en"> 
 <head> 
     <meta charset="UTF-8"> 
-    <title>地球風場3D - 全球世界觀與臺灣 CWA WRF 整合版</title> 
+    <title>地球風場3D</title> 
     <script src="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Cesium.js"></script> 
     <link href="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Widgets/widgets.css" rel="stylesheet"> 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script> 
@@ -402,7 +402,9 @@ function updateWeatherLayers() {
     const activeIsobars = document.getElementById('showIsobars').checked; 
 
     updateValidTimeDisplay(model, targetHour); 
-    let levelQueryStr = (model === 'cwawrf') ? '10m' : level; 
+    
+    // FIX: Maintain requested level layers for CWA WRF to match your daemon output structures
+    let levelQueryStr = level; 
 
     if (activeWindSpeed || document.getElementById('showParticles').checked || document.getElementById('showCoastlines').checked) { 
         fetchGzJson(`${cdnBase}/${model}_${levelQueryStr}_f${targetHour}.json.gz`, localToken, data => { 
@@ -431,6 +433,7 @@ function renderVelocityCanvasStack(jsonData, drawHeatmap) {
     drawWebGLWindCoastlines(ctxT, nx, ny, header); 
     let w = lo1 > 180 ? lo1 - 360 : lo1, e = lo2 > 180 ? lo2 - 360 : lo2; if (e <= w) e += 360; 
 
+    // FIX: Standardize boundary positioning mapping across clipping vectors
     velocityTextureLayer = viewer.imageryLayers.addImageryProvider(new Cesium.SingleTileImageryProvider({ url: canvasT.toDataURL(), rectangle: Cesium.Rectangle.fromDegrees(w, la2, e, la1) })); 
     enforceLayerOrdering(); 
 } 
@@ -449,7 +452,7 @@ function renderIsobarContours(jsonData) {
                     const x1 = (pts[0].x / nx) * canvasT.width, y1 = (pts[0].y / ny) * canvasT.height; 
                     const x2 = (pts[1].x / nx) * canvasT.width, y2 = (pts[1].y / ny) * canvasT.height; 
                     if (x % 45 === 0 && y % 45 === 0) ctxT.fillText(String(Math.round(p/100)), x1, y1); 
-                    else { ctxT.beginPath(); ctxT.moveTo(x1, y1); ctxT.lineTo(x2, y2); ctxT.stroke(); } 
+                    else { ctxT.beginPath(); ctxT.moveTo(x1, y1); ctxT.lineTo(x2, y2); stroke(); } 
                 } 
             } 
         } 

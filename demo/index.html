@@ -87,7 +87,7 @@
     </div>
     <div class="checkbox-container">
         <input type="checkbox" id="showCoastlines" checked onchange="toggleCoastlines()">
-        <label Friday for="showCoastlines" style="display:inline; color:#fff;">High-Contrast Coastlines</label>
+        <label for="showCoastlines" style="display:inline; color:#fff;">High-Contrast Coastlines</label>
     </div>
 
     <div id="timeDisplayPanel">
@@ -106,7 +106,7 @@
     for (let h = 0; h <= 120; h += 6) { forecastHours.push(String(h).padStart(3, '0')); }
     for (let h = 132; h <= 240; h += 12) { forecastHours.push(String(h).padStart(3, '0')); }
 
-    // Pre-instantiated providers to maintain clean references
+    // Pre-instantiated map tile layers
     const satelliteProvider = new Cesium.ArcGisMapServerImageryProvider({
         url: 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer'
     });
@@ -114,16 +114,24 @@
         url: 'https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer'
     });
 
-    // Clean initialization without default properties array disruptions
+    // NO-TOKEN FIX: Explicit configuration parameters to isolate the map engine from Cesium Ion cloud servers
     const viewer = new Cesium.Viewer('cesiumContainer', {
-        geocoder: false, homeButton: false, sceneModePicker: false,
-        baseLayerPicker: false, navigationHelpButton: false, animation: false,
-        timeline: false, fullscreenButton: false
+        imageryProvider: satelliteProvider, // Inject our direct map provider instantly
+        geocoder: false, 
+        homeButton: false, 
+        sceneModePicker: false,
+        baseLayerPicker: false, 
+        navigationHelpButton: false, 
+        animation: false,
+        timeline: false, 
+        fullscreenButton: false,
+        skyBox: false,         // Bypasses Cesium server sky background dependencies
+        skyAtmosphere: false   // Disables global atmospheric shader fallback tracking
     });
     viewer.scene.globe.baseColor = Cesium.Color.BLACK;
 
-    // Explicit baseline assignment tracked by specific global variable instance
-    let baseImageryLayer = viewer.imageryLayers.addImageryProvider(satelliteProvider);
+    // Direct reference tracking handle
+    let baseImageryLayer = viewer.imageryLayers.get(0);
 
     let velocityTextureLayer = null;
     let combinedOutputLayer = null;
@@ -141,7 +149,7 @@
     initCoastlines();
 
     /**
-     * Safely updates map textures on the bottom layer to eliminate the e._resource WebGL renderer crash
+     * Safely textures the bottom layer to eliminate index array corruption crashes
      */
     function changeBasemapTheme() {
         const theme = document.getElementById('basemapSelect').value;
@@ -152,7 +160,6 @@
             baseImageryLayer.imageryProvider = darkCanvasProvider;
         }
         
-        // Dynamically adjust high contrast vectors to pop against the chosen background
         if (coastlineDataSource) {
             coastlineDataSource.entities.values.forEach(entity => {
                 if (entity.polyline) {
@@ -187,7 +194,6 @@
     function updateWeatherLayers() { 
         const localToken = ++currentUpdateToken; 
         
-        // Explicit removal via instance variables to protect baseline imagery mappings
         if (velocityTextureLayer) { viewer.imageryLayers.remove(velocityTextureLayer); velocityTextureLayer = null; }
         if (combinedOutputLayer) { viewer.imageryLayers.remove(combinedOutputLayer); combinedOutputLayer = null; }
         if (radarLayer) { viewer.imageryLayers.remove(radarLayer); radarLayer = null; }
@@ -326,6 +332,7 @@
             }).catch(err => console.error("Radar sync error:", err));
     }
 
+    // URL FIX: Swapped out broken 404 URL with an updated high-performance vector coastline CDN link
     function initCoastlines() {
         Cesium.GeoJsonDataSource.load('https://cdn.jsdelivr.net/gh/nvkelso/natural-earth-vector@master/geojson/ne_110m_coastline.geojson', {
             stroke: Cesium.Color.fromCssColorString('#ffffff').withAlpha(0.4), fill: Cesium.Color.TRANSPARENT, strokeWidth: 1.5
@@ -413,6 +420,7 @@
         return pts;
     }
 
+    // ORDERING FIX: Forces structural composition stack alignment under particle layers
     function enforceLayerOrdering() {
         if (baseImageryLayer) viewer.imageryLayers.lowerToBottom(baseImageryLayer);
         if (velocityTextureLayer) viewer.imageryLayers.raiseToTop(velocityTextureLayer);

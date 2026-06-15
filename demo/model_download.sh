@@ -136,9 +136,22 @@ def build_json(param, level, ds, u_var, v_var=None, is_pressure_level=False):
             u_vals = np.flipud(u_vals)
             if v_var: v_vals = np.flipud(v_vals)
 
+        if v_var is None:
+            # Single-variable payload formatting (MSLP isobars)
+            return {
+                "header": {
+                    "parameterName": "Mean Sea Level Pressure", 
+                    "surface1Value": 0, "nx": nx, "ny": ny, 
+                    "lo1": float(lons.min()), "la1": float(lats.max()), 
+                    "lo2": float(lons.max()), "la2": float(lats.min()), 
+                    "dx": 0.25, "dy": 0.25
+                }, 
+                "data": np.where(np.isnan(u_vals), 101325, u_vals).flatten().tolist()
+            }
+
         return [
             {"header": {"parameterName": "U-component of wind", "surface1Value": level, "nx": nx, "ny": ny, "lo1": float(lons.min()), "la1": float(lats.max()), "lo2": float(lons.max()), "la2": float(lats.min()), "dx": 0.25, "dy": 0.25}, "data": np.where(np.isnan(u_vals), 0, u_vals).flatten().tolist()},
-            {"header": {"parameterName": "V-component of wind", "surface1Value": level, "nx": nx, "ny": ny, "lo1": float(lons.min()), "la1": float(lats.max()), "lo2": float(lons.max()), "la2": float(lats.min()), "dx": 0.25, "dy": 0.25}, "data": np.where(np.isnan(v_vals), 0, v_vals).flatten().tolist()}
+            {"header": {"parameterName": "V-component of wind", "surface1Value": level, "nx": nx, "ny": ny, "lo1": float(lons.min()), "la1": float(lats.max()), "lo2": float(lats.min()), "la2": float(lats.min()), "dx": 0.25, "dy": 0.25}, "data": np.where(np.isnan(v_vals), 0, v_vals).flatten().tolist()}
         ]
     except Exception as e:
         print(f"Extraction error processing fields: {e}")
@@ -160,6 +173,12 @@ try:
     Hg = Herbie(gfs_date_env, model="gfs", product="pgrb2.0p25", fxx=clean_hour_env, verbose=False)
     save_gzip(build_json("Wind", 10, safe_xarray_fetch(Hg, ":(U|V)GRD:10 m above ground:"), "u10", "v10"), f"gfs_10m_f{fhr_env}.json.gz")
     
+    # Extract GFS Mean Sea Level Pressure Isobars
+    gfs_mslp = safe_xarray_fetch(Hg, ":PRMSL:mean sea level:")
+    if gfs_mslp is not None:
+        mslp_var = "prmsl" if "prmsl" in gfs_mslp.data_vars else list(gfs_mslp.data_vars)[0]
+        save_gzip(build_json("MSLP", 0, gfs_mslp, mslp_var, None), f"gfs_mslp_f{fhr_env}.json.gz")
+
     # Adaptive lookup strategy for GFS Upper Air Layers
     for p in [850, 700, 500, 200]:
         gfs_plev_ds = safe_xarray_fetch(Hg, f":(U|V)GRD:{p} mb:")
@@ -172,6 +191,13 @@ except Exception as e: print(f"GFS Skip: {e}")
 try:
     He = Herbie(ifs_date_env, model="ifs", product="oper", source="ecmwf", fxx=clean_hour_env, verbose=False)
     save_gzip(build_json("Wind", 10, safe_xarray_fetch(He, ":10(u|v):"), "u10", "v10"), f"ecmwf_10m_f{fhr_env}.json.gz")
+    
+    # Extract ECMWF MSLP Isobars
+    ifs_mslp = safe_xarray_fetch(He, ":msl:")
+    if ifs_mslp is not None:
+        mslp_var = "msl" if "msl" in ifs_mslp.data_vars else list(ifs_mslp.data_vars)[0]
+        save_gzip(build_json("MSLP", 0, ifs_mslp, mslp_var, None), f"ecmwf_mslp_f{fhr_env}.json.gz")
+
     for p in [850, 700, 500, 200]:
         save_gzip(build_json("Wind", p, safe_xarray_fetch(He, f":(u|v):{p}:"), "u", "v", True), f"ecmwf_{p}_f{fhr_env}.json.gz")
 except Exception as e: print(f"IFS Skip: {e}")
@@ -179,6 +205,13 @@ except Exception as e: print(f"IFS Skip: {e}")
 try:
     Ha = Herbie(aifs_date_env, model="aifs", product="oper", source="ecmwf", fxx=clean_hour_env, verbose=False)
     save_gzip(build_json("Wind", 10, safe_xarray_fetch(Ha, ":10(u|v):"), "u10", "v10"), f"aifs_10m_f{fhr_env}.json.gz")
+    
+    # Extract AIFS MSLP Isobars
+    aifs_mslp = safe_xarray_fetch(Ha, ":msl:")
+    if aifs_mslp is not None:
+        mslp_var = "msl" if "msl" in aifs_mslp.data_vars else list(aifs_mslp.data_vars)[0]
+        save_gzip(build_json("MSLP", 0, aifs_mslp, mslp_var, None), f"aifs_mslp_f{fhr_env}.json.gz")
+
     for p in [850, 700, 500, 200]:
         save_gzip(build_json("Wind", p, safe_xarray_fetch(Ha, f":(u|v):{p}:"), "u", "v", True), f"aifs_{p}_f{fhr_env}.json.gz")
 except Exception as e: print(f"AIFS Skip: {e}")

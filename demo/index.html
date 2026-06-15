@@ -322,11 +322,18 @@
     }
 
     function initCoastlines() {
-        Cesium.GeoJsonDataSource.load('https://raw.githubusercontent.com/glynnbird/countriesgeojson/master/world.geojson', {
-            stroke: Cesium.Color.fromCssColorString('#475569'), fill: Cesium.Color.TRANSPARENT, strokeWidth: 1.5
-        }).then(dataSource => {
-            coastlineDataSource = dataSource; viewer.dataSources.add(dataSource);
-        });
+    // Switched to an optimized, highly available CDN delivery target for world maps
+    Cesium.GeoJsonDataSource.load('https://cdn.jsdelivr.net/gh/nvkelso/natural-earth-vector@master/geojson/ne_110m_coastline.geojson', {
+        stroke: Cesium.Color.fromCssColorString('#475569'), // Slate-500 line
+        fill: Cesium.Color.TRANSPARENT,
+        strokeWidth: 1.5
+    }).then(dataSource => {
+        coastlineDataSource = dataSource; 
+        viewer.dataSources.add(dataSource);
+    }).catch(err => {
+        // Fallback error boundary: Prevents a missing map file from crashing the entire app
+        console.warn("Coastline vector failed to load, bypassing to preserve weather rendering:", err);
+    });
     }
 
     function toggleCoastlines() {

@@ -186,26 +186,27 @@ function calculateRegularTimeDisplay() {
     let sliderIdx = document.getElementById('timeSlider').value;
     let targetHour = parseInt(forecastHours[sliderIdx], 10);
     
-    let now = new Date();
-    let currentHour = now.getUTCHours();
+    // 1. Get the absolute current UTC time components directly
+    const now = new Date();
+    const currentYear = now.getUTCFullYear();
+    const currentMonth = now.getUTCMonth();
+    const currentDate = now.getUTCDate();
+    const currentHour = now.getUTCHours();
     
-    let cycleDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    // 2. Initialize a locked UTC date point (No local timezone leaks)
+    let cycleDate = new Date(Date.UTC(currentYear, currentMonth, currentDate, 0, 0, 0));
     let cycleHour = 0;
     
     if (model === 'gfs') {
-        // Bash logic: if [ "$CURRENT_HOUR" -ge 6 ] && [ "$CURRENT_HOUR" -lt 18 ]
         if (currentHour >= 6 && currentHour < 18) {
             cycleHour = 0;
-        // elif [ "$CURRENT_HOUR" -ge 18 ] && [ "$CURRENT_HOUR" -lt 24 ]
         } else if (currentHour >= 18 && currentHour < 24) {
             cycleHour = 12;
-        // else (Hour is between 00 and 05)
         } else {
             cycleHour = 12;
             cycleDate.setUTCDate(cycleDate.getUTCDate() - 1); // Yesterday
         }
     } else if (model === 'ecmwf') {
-        // Bash logic: if [ "$CURRENT_HOUR" -ge 9 ] && [ "$CURRENT_HOUR" -lt 21 ]
         if (currentHour >= 9 && currentHour < 21) {
             cycleHour = 0;
         } else {
@@ -215,7 +216,6 @@ function calculateRegularTimeDisplay() {
             }
         }
     } else if (model === 'aifs') {
-        // Bash logic: if [ "$CURRENT_HOUR" -ge 7 ] && [ "$CURRENT_HOUR" -lt 19 ]
         if (currentHour >= 7 && currentHour < 19) {
             cycleHour = 0;
         } else {
@@ -225,24 +225,23 @@ function calculateRegularTimeDisplay() {
             }
         }
     } else if (model === 'cwawrf') {
-        // Bash logic: if [ "$CURRENT_HOUR" -ge 19 ] -> 12Z Today
         if (currentHour >= 19) {
             cycleHour = 12;
-        // elif [ "$CURRENT_HOUR" -ge 7 ] -> 00Z Today
         } else if (currentHour >= 7) {
             cycleHour = 0;
-        // else -> 12Z Yesterday
         } else {
             cycleHour = 12;
             cycleDate.setUTCDate(cycleDate.getUTCDate() - 1); // Yesterday
         }
     }
     
+    // Explicitly set the calculated model run hour in UTC
     cycleDate.setUTCHours(cycleHour, 0, 0, 0);
     
-    let validDate = new Date(cycleDate.getTime());
-    validDate.setUTCHours(validDate.getUTCHours() + targetHour);
+    // 3. Increment forecast validation window strictly via UTC milliseconds
+    let validDate = new Date(cycleDate.getTime() + (targetHour * 60 * 60 * 1000));
     
+    // Clean, standard formatting helper string
     function formatStr(d) {
         let yyyy = d.getUTCFullYear();
         let mm = String(d.getUTCMonth() + 1).padStart(2, '0');

@@ -49,8 +49,8 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16p
 <label>Forecast Timeline: +<span id="hourVal">000</span> Hours</label>
 <input type="range" id="timeSlider" min="0" value="0" step="1" oninput="handleSliderChange(this.value)">
 <div class="valid-time-display" id="validTimePanel">
-    <div><span style="color:#a1a1aa;">CYCLE:</span> <span id="runTimeVal">Loading telemetry...</span></div>
-    <div><span style="color:#a1a1aa;">VALID:</span> <span id="validTimeVal">Loading telemetry...</span></div>
+    <div><span style="color:#a1a1aa;">CYCLE:</span> <span id="runTimeVal">Calculating...</span></div>
+    <div><span style="color:#a1a1aa;">VALID:</span> <span id="validTimeVal">Calculating...</span></div>
 </div>
 </div>
 <div class="control-group"><label>GIS Base Map Canvas</label>
@@ -180,63 +180,84 @@ function updateAndDrawParticles() {
 viewer.scene.preRender.addEventListener(function() { updateAndDrawParticles(); }); 
 initParticles();
 
-// TELEMETRY TRANSLATOR: Safely processes custom Python string timestamps into clean UTC text
-function updateTrueTelemetryDisplay(header, targetHour) {
-    if (!header) return;
+// MATCHED TIMING DAEMON: Replicates your explicit Bash shell logic step-for-step
+function calculateRegularTimeDisplay() {
+    const model = document.getElementById('modelSelect').value;
+    let sliderIdx = document.getElementById('timeSlider').value;
+    let targetHour = parseInt(forecastHours[sliderIdx], 10);
     
-    let rawRefTime = header.refTime || header.ref_time || header.runtime;
-    let rawValidTime = header.validTime || header.valid_time;
+    let now = new Date();
+    let currentHour = now.getUTCHours();
     
-    let displayRun = "N/A";
-    let displayValid = "N/A";
+    let cycleDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    let cycleHour = 0;
     
-    function sanitizeUtcString(timeStr) {
-        if (!timeStr) return "N/A";
-        let clean = String(timeStr).trim();
-        
-        if (clean.endsWith(" UTC")) {
-            clean = clean.substring(0, clean.length - 4);
+    if (model === 'gfs') {
+        // Bash logic: if [ "$CURRENT_HOUR" -ge 6 ] && [ "$CURRENT_HOUR" -lt 18 ]
+        if (currentHour >= 6 && currentHour < 18) {
+            cycleHour = 0;
+        // elif [ "$CURRENT_HOUR" -ge 18 ] && [ "$CURRENT_HOUR" -lt 24 ]
+        } else if (currentHour >= 18 && currentHour < 24) {
+            cycleHour = 12;
+        // else (Hour is between 00 and 05)
+        } else {
+            cycleHour = 12;
+            cycleDate.setUTCDate(cycleDate.getUTCDate() - 1); // Yesterday
         }
-        if (!clean.includes('T') && clean.includes(' ')) {
-            clean = clean.replace(' ', 'T');
+    } else if (model === 'ecmwf') {
+        // Bash logic: if [ "$CURRENT_HOUR" -ge 9 ] && [ "$CURRENT_HOUR" -lt 21 ]
+        if (currentHour >= 9 && currentHour < 21) {
+            cycleHour = 0;
+        } else {
+            cycleHour = 12;
+            if (currentHour < 9) {
+                cycleDate.setUTCDate(cycleDate.getUTCDate() - 1); // Yesterday
+            }
         }
-        if (!clean.endsWith('Z') && !clean.includes('+') && !clean.includes('-')) {
-            clean += 'Z';
+    } else if (model === 'aifs') {
+        // Bash logic: if [ "$CURRENT_HOUR" -ge 7 ] && [ "$CURRENT_HOUR" -lt 19 ]
+        if (currentHour >= 7 && currentHour < 19) {
+            cycleHour = 0;
+        } else {
+            cycleHour = 12;
+            if (currentHour < 7) {
+                cycleDate.setUTCDate(cycleDate.getUTCDate() - 1); // Yesterday
+            }
         }
-        
-        const dateObj = new Date(clean);
-        if (isNaN(dateObj.getTime())) return String(timeStr);
-        
-        const yyyy = dateObj.getUTCFullYear();
-        const mm = String(dateObj.getUTCMonth() + 1).padStart(2, '0');
-        const dd = String(dateObj.getUTCDate()).padStart(2, '0');
-        const hh = String(dateObj.getUTCHours()).padStart(2, '0');
-        const min = String(dateObj.getUTCMinutes()).padStart(2, '0');
-        return `${yyyy}-${mm}-${dd} ${hh}:${min}Z`;
+    } else if (model === 'cwawrf') {
+        // Bash logic: if [ "$CURRENT_HOUR" -ge 19 ] -> 12Z Today
+        if (currentHour >= 19) {
+            cycleHour = 12;
+        // elif [ "$CURRENT_HOUR" -ge 7 ] -> 00Z Today
+        } else if (currentHour >= 7) {
+            cycleHour = 0;
+        // else -> 12Z Yesterday
+        } else {
+            cycleHour = 12;
+            cycleDate.setUTCDate(cycleDate.getUTCDate() - 1); // Yesterday
+        }
     }
     
-    if (rawRefTime) displayRun = sanitizeUtcString(rawRefTime);
-    if (rawValidTime) {
-        displayValid = sanitizeUtcString(rawValidTime);
-    } else if (rawRefTime) {
-        let clean = String(rawRefTime).replace(" UTC", "").trim().replace(' ', 'T') + 'Z';
-        let baseDate = new Date(clean);
-        if (!isNaN(baseDate.getTime())) {
-            baseDate.setUTCHours(baseDate.getUTCHours() + parseInt(targetHour, 10));
-            const yyyy = baseDate.getUTCFullYear();
-            const mm = String(baseDate.getUTCMonth() + 1).padStart(2, '0');
-            const dd = String(baseDate.getUTCDate()).padStart(2, '0');
-            const hh = String(baseDate.getUTCHours()).padStart(2, '0');
-            displayValid = `${yyyy}-${mm}-${dd} ${hh}:00Z`;
-        }
+    cycleDate.setUTCHours(cycleHour, 0, 0, 0);
+    
+    let validDate = new Date(cycleDate.getTime());
+    validDate.setUTCHours(validDate.getUTCHours() + targetHour);
+    
+    function formatStr(d) {
+        let yyyy = d.getUTCFullYear();
+        let mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+        let dd = String(d.getOriginalDate ? d.getOriginalDate() : d.getUTCDate()).padStart(2, '0');
+        let hh = String(d.getUTCHours()).padStart(2, '0');
+        return `${yyyy}-${mm}-${dd} ${hh}:00 UTC`;
     }
     
-    document.getElementById('runTimeVal').innerText = displayRun;
-    document.getElementById('validTimeVal').innerText = displayValid;
+    document.getElementById('runTimeVal').innerText = formatStr(cycleDate);
+    document.getElementById('validTimeVal').innerText = formatStr(validDate);
 }
 
 function handleSliderChange(val) {
     document.getElementById('hourVal').innerText = forecastHours[val]; 
+    calculateRegularTimeDisplay();
     updateWeatherLayers(); 
 }
 
@@ -315,6 +336,9 @@ function updateWeatherLayers() {
     [velocityTextureLayer, combinedOutputLayer].forEach(l => { if(l) viewer.imageryLayers.remove(l); });
     velocityTextureLayer = combinedOutputLayer = activeDataset = null;
     
+    // Refresh calculations based on current model criteria matching bash script limits
+    calculateRegularTimeDisplay();
+
     const model = document.getElementById('modelSelect').value;
     const level = document.getElementById('levelSelect').value;
     let sliderIdx = document.getElementById('timeSlider').value;
@@ -325,6 +349,7 @@ function updateWeatherLayers() {
         document.getElementById('timeSlider').value = maxCwaIndex;
         document.getElementById('hourVal').innerText = "084";
         targetHour = "084";
+        calculateRegularTimeDisplay();
     }
     
     const activeWindSpeed = document.getElementById('showWindSpeed').checked;
@@ -334,10 +359,7 @@ function updateWeatherLayers() {
     if(activeWindSpeed || document.getElementById('showParticles').checked || document.getElementById('showCoastlines').checked) {
         fetchGzJson(`${cdnBase}/${model}_${levelQueryStr}_f${targetHour}.json.gz`, localToken, data => {
             if (!data || !data[0]) return;
-            activeDataset = data; // Locks in active wind array
-            if (data[0].header) {
-                updateTrueTelemetryDisplay(data[0].header, parseInt(targetHour, 10));
-            }
+            activeDataset = data;
             renderVelocityCanvasStack(data, activeWindSpeed);
         });
     }
@@ -345,10 +367,6 @@ function updateWeatherLayers() {
     if (activeIsobars && model !== 'cwawrf') {
         fetchGzJson(`${cdnBase}/${model}_mslp_f${targetHour}.json.gz`, localToken, data => {
             if (!data) return;
-            if (data.header) {
-                // Only update tracking engine if wind speed dataset isn't tracking actively
-                if (!activeWindSpeed) updateTrueTelemetryDisplay(data.header, parseInt(targetHour, 10));
-            }
             renderIsobarContours(data);
         });
     }
@@ -405,7 +423,6 @@ function getCellIntersections(x, y, vTL, vTR, vBL, vBR, iso) {
 
 const mouseHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
 mouseHandler.setInputAction(function(movement) {
-    // FIXED: Blocks crash if activeDataset structure is an object (MSLP) instead of a Wind array
     if(!activeDataset || !Array.isArray(activeDataset)) { trackingLabel.style.display = 'none'; return; }
     const cartesian = viewer.camera.pickEllipsoid(movement.endPosition, viewer.scene.globe.ellipsoid);
     if (cartesian) {

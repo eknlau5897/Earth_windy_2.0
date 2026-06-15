@@ -99,31 +99,31 @@
 <div id="cesiumContainer"></div>
 
 <script>
-    const cdnBase = "../data"; 
+    const cdnBase = "./data"; 
     let currentUpdateToken = 0;
 
     const forecastHours = [];
     for (let h = 0; h <= 120; h += 6) { forecastHours.push(String(h).padStart(3, '0')); }
     for (let h = 132; h <= 240; h += 12) { forecastHours.push(String(h).padStart(3, '0')); }
 
-    // Defined the basemap configurations explicitly
-    const basemaps = {
-        satellite: new Cesium.ArcGisMapServerImageryProvider({
-            url: 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer'
-        }),
-        dark: new Cesium.ArcGisMapServerImageryProvider({
-            url: 'https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer'
-        })
-    };
+    // Pre-instantiated providers to maintain clean references
+    const satelliteProvider = new Cesium.ArcGisMapServerImageryProvider({
+        url: 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer'
+    });
+    const darkCanvasProvider = new Cesium.ArcGisMapServerImageryProvider({
+        url: 'https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer'
+    });
 
-    // Defaults to satellite on initial canvas boot
+    // Clean initialization without default properties array disruptions
     const viewer = new Cesium.Viewer('cesiumContainer', {
-        imageryProvider: basemaps.satellite,
         geocoder: false, homeButton: false, sceneModePicker: false,
         baseLayerPicker: false, navigationHelpButton: false, animation: false,
         timeline: false, fullscreenButton: false
     });
     viewer.scene.globe.baseColor = Cesium.Color.BLACK;
+
+    // Explicit baseline assignment tracked by specific global variable instance
+    let baseImageryLayer = viewer.imageryLayers.addImageryProvider(satelliteProvider);
 
     let velocityTextureLayer = null;
     let combinedOutputLayer = null;
@@ -134,30 +134,31 @@
     // --- Particle Animation Engine Variables ---
     let particleCollection = [];
     let particlePrimitives = null;
-    const MAX_PARTICLES = 7500; 
+    const MAX_PARTICLES = 3500; 
     const PARTICLE_MAX_AGE = 40; 
     let particleAnimationLoop = null;
 
     initCoastlines();
 
     /**
-     * Swaps out the bottom base globe tile maps dynamically without breaking weather overlays
+     * Safely updates map textures on the bottom layer to eliminate the e._resource WebGL renderer crash
      */
     function changeBasemapTheme() {
         const theme = document.getElementById('basemapSelect').value;
-        const targetProvider = basemaps[theme];
         
-        // Remove old base layer safely and insert the fresh selection at index 0
-        viewer.imageryLayers.remove(viewer.imageryLayers.get(0));
-        viewer.imageryLayers.addImageryProvider(targetProvider, 0);
+        if (theme === 'satellite') {
+            baseImageryLayer.imageryProvider = satelliteProvider;
+        } else {
+            baseImageryLayer.imageryProvider = darkCanvasProvider;
+        }
         
-        // Change line contrast dynamically to fit background context
+        // Dynamically adjust high contrast vectors to pop against the chosen background
         if (coastlineDataSource) {
             coastlineDataSource.entities.values.forEach(entity => {
                 if (entity.polyline) {
                     entity.polyline.material = (theme === 'satellite') 
-                        ? Cesium.Color.fromCssColorString('#ffffff').withAlpha(0.4) // Subtle white over satellite
-                        : Cesium.Color.fromCssColorString('#475569'); // High-contrast slate over dark canvas
+                        ? Cesium.Color.fromCssColorString('#ffffff').withAlpha(0.4)
+                        : Cesium.Color.fromCssColorString('#475569');
                 }
             });
         }
@@ -186,14 +187,12 @@
     function updateWeatherLayers() { 
         const localToken = ++currentUpdateToken; 
         
-        // Retain index 0 (base imagery maps), remove active weather layers
-        const layerCount = viewer.imageryLayers.length;
-        for (let i = layerCount - 1; i > 0; i--) {
-            const layer = viewer.imageryLayers.get(i);
-            if (layer !== radarLayer && layer !== velocityTextureLayer && layer !== combinedOutputLayer) continue;
-            viewer.imageryLayers.remove(layer);
-        }
-        velocityTextureLayer = combinedOutputLayer = radarLayer = activeDataset = null; 
+        // Explicit removal via instance variables to protect baseline imagery mappings
+        if (velocityTextureLayer) { viewer.imageryLayers.remove(velocityTextureLayer); velocityTextureLayer = null; }
+        if (combinedOutputLayer) { viewer.imageryLayers.remove(combinedOutputLayer); combinedOutputLayer = null; }
+        if (radarLayer) { viewer.imageryLayers.remove(radarLayer); radarLayer = null; }
+        
+        activeDataset = null; 
         clearParticleEngine();
 
         const model = document.getElementById('modelSelect').value; 
@@ -415,6 +414,7 @@
     }
 
     function enforceLayerOrdering() {
+        if (baseImageryLayer) viewer.imageryLayers.lowerToBottom(baseImageryLayer);
         if (velocityTextureLayer) viewer.imageryLayers.raiseToTop(velocityTextureLayer);
         if (radarLayer) viewer.imageryLayers.raiseToTop(radarLayer);
         if (combinedOutputLayer) viewer.imageryLayers.raiseToTop(combinedOutputLayer);

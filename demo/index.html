@@ -502,27 +502,6 @@ function renderVelocityCanvasStack(jsonData, drawHeatmap) {
     enforceLayerOrdering(); 
 } 
 
-function renderPrecipitationTexture(jsonData) { 
-    const { data, header } = jsonData, { nx, ny, lo1, la1, lo2, la2 } = header; 
-    const canvasT = document.createElement('canvas'); canvasT.width = nx; canvasT.height = ny; const ctxT = canvasT.getContext('2d'); const imgData = ctxT.createImageData(nx, ny); 
-    
-    for (let i = 0; i < data.length; i++) { 
-        const val = data[i]; 
-        const color = getNipySpectralColor(val); 
-        if (color) { 
-            const cIdx = i * 4; 
-            imgData.data[cIdx] = color[0]; 
-            imgData.data[cIdx+1] = color[1]; 
-            imgData.data[cIdx+2] = color[2]; 
-            imgData.data[cIdx+3] = color[3]; 
-        } 
-    } 
-    ctxT.putImageData(imgData, 0, 0); 
-    let w = lo1 > 180 ? lo1 - 360 : lo1, e = lo2 > 180 ? lo2 - 360 : lo2; if (e <= w) e += 360; 
-    precipTextureLayer = viewer.imageryLayers.addImageryProvider(new Cesium.SingleTileImageryProvider({ url: canvasT.toDataURL(), rectangle: Cesium.Rectangle.fromDegrees(w, la2, e, la1) })); 
-    enforceLayerOrdering(); 
-} 
-
 function renderIsobarContours(jsonData) { 
     const { data, header } = jsonData, { nx, ny, lo1, la1, dx, dy } = header; 
     const canvasT = document.createElement('canvas'); canvasT.width = 2048; canvasT.height = 1024; const ctxT = canvasT.getContext('2d'); 

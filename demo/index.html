@@ -36,6 +36,14 @@
 
 <div id="controlPanel">
     <div class="control-group">
+        <label for="basemapSelect">Base Globe Theme</label>
+        <select id="basemapSelect" onchange="changeBasemapTheme()">
+            <option value="satellite">Photorealistic Satellite</option>
+            <option value="dark">World Dark Gray Canvas</option>
+        </select>
+    </div>
+
+    <div class="control-group">
         <label for="modelSelect">Forecast Model Source</label>
         <select id="modelSelect" onchange="updateWeatherLayers()">
             <option value="gfs">Global Forecast System (GFS)</option>
@@ -79,7 +87,7 @@
     </div>
     <div class="checkbox-container">
         <input type="checkbox" id="showCoastlines" checked onchange="toggleCoastlines()">
-        <label for="showCoastlines" style="display:inline; color:#fff;">High-Contrast Coastlines</label>
+        <label Friday for="showCoastlines" style="display:inline; color:#fff;">High-Contrast Coastlines</label>
     </div>
 
     <div id="timeDisplayPanel">
@@ -91,17 +99,26 @@
 <div id="cesiumContainer"></div>
 
 <script>
-    const cdnBase = "../data"; 
+    const cdnBase = "./data"; 
     let currentUpdateToken = 0;
 
     const forecastHours = [];
     for (let h = 0; h <= 120; h += 6) { forecastHours.push(String(h).padStart(3, '0')); }
     for (let h = 132; h <= 240; h += 12) { forecastHours.push(String(h).padStart(3, '0')); }
 
-    const viewer = new Cesium.Viewer('cesiumContainer', {
-        imageryProvider: new Cesium.ArcGisMapServerImageryProvider({
-            url: 'https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer'
+    // Defined the basemap configurations explicitly
+    const basemaps = {
+        satellite: new Cesium.ArcGisMapServerImageryProvider({
+            url: 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer'
         }),
+        dark: new Cesium.ArcGisMapServerImageryProvider({
+            url: 'https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer'
+        })
+    };
+
+    // Defaults to satellite on initial canvas boot
+    const viewer = new Cesium.Viewer('cesiumContainer', {
+        imageryProvider: basemaps.satellite,
         geocoder: false, homeButton: false, sceneModePicker: false,
         baseLayerPicker: false, navigationHelpButton: false, animation: false,
         timeline: false, fullscreenButton: false
@@ -124,15 +141,33 @@
     initCoastlines();
 
     /**
-     * Directly updates display tags using extracted backend JSON header metadata strings
+     * Swaps out the bottom base globe tile maps dynamically without breaking weather overlays
      */
+    function changeBasemapTheme() {
+        const theme = document.getElementById('basemapSelect').value;
+        const targetProvider = basemaps[theme];
+        
+        // Remove old base layer safely and insert the fresh selection at index 0
+        viewer.imageryLayers.remove(viewer.imageryLayers.get(0));
+        viewer.imageryLayers.addImageryProvider(targetProvider, 0);
+        
+        // Change line contrast dynamically to fit background context
+        if (coastlineDataSource) {
+            coastlineDataSource.entities.values.forEach(entity => {
+                if (entity.polyline) {
+                    entity.polyline.material = (theme === 'satellite') 
+                        ? Cesium.Color.fromCssColorString('#ffffff').withAlpha(0.4) // Subtle white over satellite
+                        : Cesium.Color.fromCssColorString('#475569'); // High-contrast slate over dark canvas
+                }
+            });
+        }
+        enforceLayerOrdering();
+    }
+
     function updateMetadataTimeDisplay(header) {
         if (!header) return;
-        
-        // Extract fields safely (handles GFS, ECMWF, and WRF dictionary variations)
         const runTime = header.refTime || header.runtime || "N/A";
         const validTime = header.validTime || header.validtime || "N/A";
-
         document.getElementById('runTimeVal').innerText = runTime;
         document.getElementById('validTimeVal').innerText = validTime;
     }
@@ -151,7 +186,13 @@
     function updateWeatherLayers() { 
         const localToken = ++currentUpdateToken; 
         
-        [velocityTextureLayer, combinedOutputLayer, radarLayer].forEach(l => { if(l) viewer.imageryLayers.remove(l); }); 
+        // Retain index 0 (base imagery maps), remove active weather layers
+        const layerCount = viewer.imageryLayers.length;
+        for (let i = layerCount - 1; i > 0; i--) {
+            const layer = viewer.imageryLayers.get(i);
+            if (layer !== radarLayer && layer !== velocityTextureLayer && layer !== combinedOutputLayer) continue;
+            viewer.imageryLayers.remove(layer);
+        }
         velocityTextureLayer = combinedOutputLayer = radarLayer = activeDataset = null; 
         clearParticleEngine();
 
@@ -173,35 +214,22 @@
         const activeIsobars = document.getElementById('showIsobars').checked; 
         const activeRadar = document.getElementById('showRadar').checked;
 
-        // 1. Process Wind Array Data (U/V Components stacked in array list)
         if (activeWindSpeed || document.getElementById('showParticles').checked) { 
             fetchGzJson(`${cdnBase}/${model}_${level}_f${targetHour}.json.gz`, localToken, data => { 
                 activeDataset = data; 
-                
-                // Extract metadata from the first parameter layer (U component)
-                if (data && data[0] && data[0].header) {
-                    updateMetadataTimeDisplay(data[0].header);
-                }
-                
+                if (data && data[0] && data[0].header) { updateMetadataTimeDisplay(data[0].header); }
                 renderVelocityCanvasStack(data, activeWindSpeed); 
-                if (document.getElementById('showParticles').checked) {
-                    initParticleEngine(data);
-                }
+                if (document.getElementById('showParticles').checked) { initParticleEngine(data); }
             }); 
         } 
         
-        // 2. Process MSLP Isobars (Single flat dictionary setup)
         if (activeIsobars && model !== 'cwawrf') { 
             fetchGzJson(`${cdnBase}/${model}_mslp_f${targetHour}.json.gz`, localToken, data => {
-                // If wind grid is unchecked, extract time headers from the isobar dataset instead
-                if (data && data.header && !activeWindSpeed) {
-                    updateMetadataTimeDisplay(data.header);
-                }
+                if (data && data.header && !activeWindSpeed) { updateMetadataTimeDisplay(data.header); }
                 renderIsobarContours(data);
             }); 
         } 
 
-        // 3. Process Weather Radar
         if (activeRadar) updateRadarOverlay();
     }
 
@@ -301,7 +329,7 @@
 
     function initCoastlines() {
         Cesium.GeoJsonDataSource.load('https://cdn.jsdelivr.net/gh/nvkelso/natural-earth-vector@master/geojson/ne_110m_coastline.geojson', {
-            stroke: Cesium.Color.fromCssColorString('#475569'), fill: Cesium.Color.TRANSPARENT, strokeWidth: 1.5
+            stroke: Cesium.Color.fromCssColorString('#ffffff').withAlpha(0.4), fill: Cesium.Color.TRANSPARENT, strokeWidth: 1.5
         }).then(dataSource => {
             coastlineDataSource = dataSource; 
             viewer.dataSources.add(dataSource);

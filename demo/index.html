@@ -2,7 +2,7 @@
 <html lang="en"> 
 <head> 
     <meta charset="UTF-8"> 
-    <title>地球風場3D - 全球世界觀真實色彩衛星整合版</title> 
+    <title>地球風場3D - 全球世界觀與臺灣 CWA WRF 整合版</title> 
     <script src="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Cesium.js"></script> 
     <link href="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Widgets/widgets.css" rel="stylesheet"> 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script> 
@@ -39,6 +39,7 @@
             <option value="gfs">NCEP GFS (Global Forecast System)</option> 
             <option value="ecmwf">ECMWF IFS (High-Resolution)</option> 
             <option value="aifs">ECMWF AIFS (Artificial Intelligence)</option> 
+            <option value="cwawrf">Taiwan CWA WRF (Regional Mesoscale)</option> 
         </select> 
     </div> 
 
@@ -110,7 +111,6 @@ let activeDataset = null, activePrecipDataset = null, webglWindCoastlineGeoJSON 
 let currentUpdateToken = 0; 
 const cdnBase = `https://lc2nz3kv-5500.asse.devtunnels.ms/data`; 
 
-// Global cache dictionary tracker
 let satLayerCache = {};
 
 const trackingLabel = document.createElement('div'); 
@@ -283,7 +283,25 @@ function calculateOperationalBaseTime(modelType) {
     let runYear = now.getUTCFullYear(), runMonth = now.getUTCMonth(), runDay = now.getUTCDate(), runHour = 0; 
     const utcHours = now.getUTCHours(); 
 
-    if (modelType === 'ecmwf' || modelType === 'aifs') { 
+    if (modelType === 'cwawrf') {
+        // Precise Custom CWA Window Assignment Matching Your Matrix Requirements
+        if (utcHours >= 19) {
+            runHour = 12;
+        } else if (utcHours >= 13) {
+            runHour = 6;
+        } else if (utcHours >= 7) {
+            runHour = 0;
+        } else if (utcHours >= 1) {
+            runHour = 18;
+        } else {
+            // Midnight to 01Z bounds rolls straight back to yesterday's 18Z dataset index
+            const yesterday = new Date(Date.UTC(runYear, runMonth, runDay - 1)); 
+            runYear = yesterday.getUTCFullYear(); 
+            runMonth = yesterday.getUTCMonth(); 
+            runDay = yesterday.getUTCDate(); 
+            runHour = 18;
+        }
+    } else if (modelType === 'ecmwf' || modelType === 'aifs') { 
         if (utcHours >= 22) runHour = 12; 
         else if (utcHours >= 10) runHour = 0; 
         else { 
@@ -291,12 +309,13 @@ function calculateOperationalBaseTime(modelType) {
             runYear = yesterday.getUTCFullYear(); runMonth = yesterday.getUTCMonth(); runDay = yesterday.getUTCDate(); runHour = 12; 
         } 
     } else { 
-        if (utcHours >= 19) runHour = 12;  
+        if (utcHours >= 19) runHour = 12; 
+        else if (utcHours >= 13) runHour = 6; 
         else if (utcHours >= 7) runHour = 0; 
         else { 
             const yesterday = new Date(Date.UTC(runYear, runMonth, runDay - 1)); 
             runYear = yesterday.getUTCFullYear(); runMonth = yesterday.getUTCMonth(); runDay = yesterday.getUTCDate(); 
-            runHour = utcHours >= 0 ? 12 : 12; 
+            runHour = utcHours >= 0 ? 18 : 12; 
         } 
     } 
     return new Date(Date.UTC(runYear, runMonth, runDay, runHour)); 
@@ -327,7 +346,7 @@ function fetchWebGLWindCoastlines() {
 
 function drawWebGLWindCoastlines(ctxT, width, height, header) { 
     if (!document.getElementById('showCoastlines').checked || !webglWindCoastlineGeoJSON) return; 
-    ctxT.save(); ctxT.lineWidth = 1.2; ctxT.strokeStyle = 'rgba(255,0,0,0.3)'; 
+    ctxT.save(); ctxT.lineWidth = 1.2; ctxT.strokeStyle = 'rgba(255,255,255,0.3)'; 
     const { lo1, la1, lo2, la2 } = header; 
     const lonRange = lo2 - lo1, latRange = la1 - la2; 
 
@@ -358,15 +377,12 @@ function toggleRealtimeRadar(isVisible) {
     }); 
 } 
 
-// INTEGRATED SYSTEM CAPABLE OF GENERATING TRUE COLOR COMPOSITE TILE CODES
 function toggleH9Satellite(isVisible) { 
     if (!isVisible) { 
         if (h9SatelliteLayer) { viewer.imageryLayers.remove(h9SatelliteLayer); h9SatelliteLayer = null; } 
         return; 
     } 
 
-    // Global daily satellite matrices require standard YYYY-MM-DD formatting.
-    // Setting an explicit 1-day safety offset ensures a fully processed complete data swath.
     const targetDate = new Date();
     targetDate.setUTCDate(targetDate.getUTCDate() - 1); 
 
@@ -375,9 +391,8 @@ function toggleH9Satellite(isVisible) {
     const day = String(targetDate.getUTCDate()).padStart(2, '0');
     
     const exactDateStr = `${year}-${month}-${day}`;
-    console.log("Loading Pristine NASA MODIS True Color Matrix For Baseline Date:", exactDateStr);
+    console.log("Loading NASA MODIS True Color Matrix For Baseline Date:", exactDateStr);
 
-    // Swap strategy checks to see if this snapshot has already been cached in active browser storage
     if (satLayerCache[exactDateStr]) {
         if (h9SatelliteLayer && h9SatelliteLayer !== satLayerCache[exactDateStr]) {
             h9SatelliteLayer.alpha = 0.0;
@@ -385,7 +400,6 @@ function toggleH9Satellite(isVisible) {
         h9SatelliteLayer = satLayerCache[exactDateStr];
         h9SatelliteLayer.alpha = 0.75;
     } else {
-        // Build the layer definition mapping to NASA's optimized JPEG raster stack
         const worldViewTrueColor = viewer.imageryLayers.addImageryProvider(
             new Cesium.UrlTemplateImageryProvider({
                 url: 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/' +
@@ -433,7 +447,16 @@ function updateWeatherLayers() {
 
     const model = document.getElementById('modelSelect').value; 
     const level = document.getElementById('levelSelect').value; 
-    const targetHour = forecastHours[document.getElementById('timeSlider').value]; 
+    let sliderIdx = document.getElementById('timeSlider').value; 
+    let targetHour = forecastHours[sliderIdx]; 
+
+    // Safety guard: Restrict CWA WRF to its maximum 84-hour frame
+    if (model === 'cwawrf' && parseInt(targetHour) > 84) {
+        const maxCwaIndex = forecastHours.indexOf("084");
+        document.getElementById('timeSlider').value = maxCwaIndex;
+        document.getElementById('hourVal').innerText = "084";
+        targetHour = "084";
+    }
 
     const activeWindSpeed = document.getElementById('showWindSpeed').checked; 
     const activeIsobars = document.getElementById('showIsobars').checked; 
@@ -441,18 +464,21 @@ function updateWeatherLayers() {
 
     updateValidTimeDisplay(model, targetHour); 
 
+    // Level enforcement rule: CWA WRF contains native surface vector metrics mapped directly to the 10m profile
+    let levelQueryStr = (model === 'cwawrf') ? '10m' : level;
+
     if (activeWindSpeed || document.getElementById('showParticles').checked || document.getElementById('showCoastlines').checked) { 
-        fetchGzJson(`${cdnBase}/${model}_${level}_f${targetHour}.json.gz`, localToken, data => { 
+        fetchGzJson(`${cdnBase}/${model}_${levelQueryStr}_f${targetHour}.json.gz`, localToken, data => { 
             activeDataset = data; 
             renderVelocityCanvasStack(data, activeWindSpeed); 
         }); 
     } 
-    if (activePrecip) { 
+    if (activePrecip && model !== 'cwawrf') { 
         fetchGzJson(`${cdnBase}/${model}_rain_f${targetHour}.json.gz`, localToken, data => { 
             activePrecipDataset = data; renderPrecipitationTexture(data); 
         }); 
     } 
-    if (activeIsobars) { 
+    if (activeIsobars && model !== 'cwawrf') { 
         fetchGzJson(`${cdnBase}/${model}_mslp_f${targetHour}.json.gz`, localToken, renderIsobarContours); 
     } 
 } 
@@ -563,7 +589,7 @@ mouseHandler.setInputAction(function(movement) {
 
 changeBasemap('dark'); 
 fetchWebGLWindCoastlines(); 
-viewer.camera.setView({ destination: Cesium.Cartesian3.fromDegrees(135.0, 25.0, 8000000), orientation: { heading: Cesium.Math.toRadians(0.0), pitch: Cesium.Math.toRadians(-90.0) } }); 
+viewer.camera.setView({ destination: Cesium.Cartesian3.fromDegrees(121.5, 24.0, 3000000), orientation: { heading: Cesium.Math.toRadians(0.0), pitch: Cesium.Math.toRadians(-90.0) } }); 
 </script> 
 </body> 
 </html>

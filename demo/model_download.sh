@@ -3,7 +3,7 @@ set -euo pipefail # Fail-fast shell architecture
 
 OUTPUT_DIR="./data"
 SCRATCH_DIR="./.tmp_scratch"
-CWA_INPUT_DIR="/Users/eknlau/Desktop/CWA/accu_rain/"  # Verified path
+CWA_INPUT_DIR="/Users/eknlau/Desktop/CWA/accu_rain/"  # Verified local Desktop path
 CHECK_INTERVAL=21600 
 
 # Repository structural targets
@@ -22,7 +22,7 @@ for ((h=0; h<=120; h+=6)); do FORECAST_HOURS+=($(printf "%03d" "$h")); done
 for ((h=132; h<=240; h+=12)); do FORECAST_HOURS+=($(printf "%03d" "$h")); done
 
 echo "=================================================================="
-echo "   HERBIE + CWA XARRAY NATIVE DAEMON ENGINE v10"
+echo "   HERBIE + CWA XARRAY NATIVE DAEMON ENGINE v11"
 echo "=================================================================="
 
 while true; do
@@ -159,13 +159,19 @@ def safe_xarray_fetch(herbie_obj, search_string):
 try:
     Hg = Herbie(gfs_date_env, model="gfs", product="pgrb2.0p25", fxx=clean_hour_env, verbose=False)
     save_gzip(build_json("Wind", 10, safe_xarray_fetch(Hg, ":(U|V)GRD:10 m above ground:"), "u10", "v10"), f"gfs_10m_f{fhr_env}.json.gz")
-    for p in [850, 700, 500, 200]:
-        save_gzip(build_json("Wind", p, safe_xarray_fetch(Hg, f":(U|V)GRD:{p} mb:"), "ugrd", "vgrd", True), f"gfs_{p}_f{fhr_env}.json.gz")
+    
+    # Safe adaptive fallback for GFS upper-air keys ('u' vs 'ugrd')
+    gfs_plev_ds = safe_xarray_fetch(Hg, ":(U|V)GRD:(850|700|500|200) mb:")
+    if gfs_plev_ds is not None:
+        gfs_u = "u" if "u" in gfs_plev_ds.data_vars else "ugrd"
+        gfs_v = "v" if "v" in gfs_plev_ds.data_vars else "vgrd"
+        for p in [850, 700, 500, 200]:
+            save_gzip(build_json("Wind", p, gfs_plev_ds, gfs_u, gfs_v, True), f"gfs_{p}_f{fhr_env}.json.gz")
 except Exception as e: print(f"GFS Skip: {e}")
 
 try:
     He = Herbie(ifs_date_env, model="ifs", product="oper", source="ecmwf", fxx=clean_hour_env, verbose=False)
-    # Fixed keys from '10u'/'10v' to 'u10'/'v10' to align with the updated ECMWF structure
+    # Fixed keys to align with the modern ECMWF coordinate structure ('u10' / 'v10')
     save_gzip(build_json("Wind", 10, safe_xarray_fetch(He, ":10(u|v):"), "u10", "v10"), f"ecmwf_10m_f{fhr_env}.json.gz")
     for p in [850, 700, 500, 200]:
         save_gzip(build_json("Wind", p, safe_xarray_fetch(He, f":(u|v):{p}:"), "u", "v", True), f"ecmwf_{p}_f{fhr_env}.json.gz")
@@ -173,7 +179,6 @@ except Exception as e: print(f"IFS Skip: {e}")
 
 try:
     Ha = Herbie(aifs_date_env, model="aifs", product="oper", source="ecmwf", fxx=clean_hour_env, verbose=False)
-    # Fixed keys from '10u'/'10v' to 'u10'/'v10' here as well
     save_gzip(build_json("Wind", 10, safe_xarray_fetch(Ha, ":10(u|v):"), "u10", "v10"), f"aifs_10m_f{fhr_env}.json.gz")
     for p in [850, 700, 500, 200]:
         save_gzip(build_json("Wind", p, safe_xarray_fetch(Ha, f":(u|v):{p}:"), "u", "v", True), f"aifs_{p}_f{fhr_env}.json.gz")
@@ -203,10 +208,10 @@ elif clean_hour_env <= 84:
             ds_pressure = datasets[2]
             
             level_mappings = {
-                850: 2,  # datasets[2].u[2]
-                700: 3,  # datasets[2].u[3]
-                500: 4,  # datasets[2].u[4]
-                200: 8   # datasets[2].u[8]
+                850: 2,  # maps to datasets[2].u[2]
+                700: 3,  # maps to datasets[2].u[3]
+                500: 4,  # maps to datasets[2].u[4]
+                200: 8   # maps to datasets[2].u[8]
             }
             
             for p_level, idx in level_mappings.items():
@@ -234,7 +239,7 @@ EOF
         fi
     done
 
-    # Cleanup backend indexes (.idx) left by cfgrib engine
+    # Cleanup backend indexes (.idx) left behind by the cfgrib engine
     find "$CWA_INPUT_DIR" -type f -name "*.idx" -delete 2>/dev/null
     find "$SCRATCH_DIR" -type f -delete 2>/dev/null
     

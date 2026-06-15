@@ -22,7 +22,7 @@ for ((h=0; h<=120; h+=6)); do FORECAST_HOURS+=($(printf "%03d" "$h")); done
 for ((h=132; h<=240; h+=12)); do FORECAST_HOURS+=($(printf "%03d" "$h")); done
 
 echo "=================================================================="
-echo "   HERBIE + CWA XARRAY NATIVE DAEMON ENGINE v12"
+echo "   HERBIE + CWA XARRAY NATIVE DAEMON ENGINE v13"
 echo "=================================================================="
 
 while true; do
@@ -73,7 +73,21 @@ while true; do
         fi
     fi
 
-    export GFS_DATE; export IFS_DATE; export AIFS_DATE; export SCRATCH_DIR; export CWA_INPUT_DIR
+    # Mirroring CWA WRF runtime calculation exactly from your web client logic
+    if [ "$CURRENT_HOUR" -ge 19 ]; then
+        CWA_DATE="${CURRENT_DATE} 12:00"
+    elif [ "$CURRENT_HOUR" -ge 13 ]; then
+        CWA_DATE="${CURRENT_DATE} 06:00"
+    elif [ "$CURRENT_HOUR" -ge 7 ]; then
+        CWA_DATE="${CURRENT_DATE} 00:00"
+    elif [ "$CURRENT_HOUR" -ge 1 ]; then
+        CWA_DATE="${CURRENT_DATE} 18:00"
+    else
+        CWA_DATE="${YESTERDAY} 18:00"
+    fi
+
+    export GFS_DATE; export IFS_DATE; export AIFS_DATE; export CWA_DATE
+    export SCRATCH_DIR; export CWA_INPUT_DIR
 
     CYCLE_ID="${FILE_DATE}_gfs${GFS_CYCLE}_ifs${IFS_CYCLE}_aifs${AIFS_CYCLE}"
     success_lockfile="$OUTPUT_DIR/.success_${CYCLE_ID}"
@@ -94,17 +108,30 @@ while true; do
 import os, sys, json, gzip
 import numpy as np
 import xarray as xr
+from datetime import datetime, timedelta
 from herbie import Herbie
 
 gfs_date_env = os.environ.get("GFS_DATE")
 ifs_date_env = os.environ.get("IFS_DATE")
 aifs_date_env = os.environ.get("AIFS_DATE")
+cwa_date_env = os.environ.get("CWA_DATE")
 clean_hour_env = int(os.environ.get("CLEAN_HOUR", 0))
 fhr_env = os.environ.get("fhr")
 scratch_dir = os.environ.get("SCRATCH_DIR", "./.tmp_scratch")
 cwa_input_dir = os.environ.get("CWA_INPUT_DIR", "./cwa_raw_folder")
 
-def build_json(param, level, ds, u_var, v_var=None, is_pressure_level=False):
+def get_time_strings(base_date_str, fhr_int):
+    """Calculates explicit ISO strings for baseline run and forecast target validity."""
+    if not base_date_str:
+        return "N/A", "N/A"
+    try:
+        base_dt = datetime.strptime(base_date_str, "%Y-%m-%d %H:%M")
+        valid_dt = base_dt + timedelta(hours=fhr_int)
+        return base_dt.strftime("%Y-%m-%d %H:%M UTC"), valid_dt.strftime("%Y-%m-%d %H:%M UTC")
+    except Exception:
+        return base_date_str, "N/A"
+
+def build_json(param, level, ds, u_var, v_var=None, is_pressure_level=False, base_date_str=None):
     if ds is None: return None
     try:
         lon_key = 'longitude' if 'longitude' in ds.coords else 'lon'
@@ -136,6 +163,8 @@ def build_json(param, level, ds, u_var, v_var=None, is_pressure_level=False):
             u_vals = np.flipud(u_vals)
             if v_var: v_vals = np.flipud(v_vals)
 
+        run_time, valid_time = get_time_strings(base_date_str, clean_hour_env)
+
         if v_var is None:
             # Single-variable payload formatting (MSLP isobars)
             return {
@@ -144,14 +173,16 @@ def build_json(param, level, ds, u_var, v_var=None, is_pressure_level=False):
                     "surface1Value": 0, "nx": nx, "ny": ny, 
                     "lo1": float(lons.min()), "la1": float(lats.max()), 
                     "lo2": float(lons.max()), "la2": float(lats.min()), 
-                    "dx": 0.25, "dy": 0.25
+                    "dx": 0.25, "dy": 0.25,
+                    "refTime": run_time,
+                    "validTime": valid_time
                 }, 
                 "data": np.where(np.isnan(u_vals), 101325, u_vals).flatten().tolist()
             }
 
         return [
-            {"header": {"parameterName": "U-component of wind", "surface1Value": level, "nx": nx, "ny": ny, "lo1": float(lons.min()), "la1": float(lats.max()), "lo2": float(lons.max()), "la2": float(lats.min()), "dx": 0.25, "dy": 0.25}, "data": np.where(np.isnan(u_vals), 0, u_vals).flatten().tolist()},
-            {"header": {"parameterName": "V-component of wind", "surface1Value": level, "nx": nx, "ny": ny, "lo1": float(lons.min()), "la1": float(lats.max()), "lo2": float(lats.min()), "la2": float(lats.min()), "dx": 0.25, "dy": 0.25}, "data": np.where(np.isnan(v_vals), 0, v_vals).flatten().tolist()}
+            {"header": {"parameterName": "U-component of wind", "surface1Value": level, "nx": nx, "ny": ny, "lo1": float(lons.min()), "la1": float(lats.max()), "lo2": float(lons.max()), "la2": float(lats.min()), "dx": 0.25, "dy": 0.25, "refTime": run_time, "validTime": valid_time}, "data": np.where(np.isnan(u_vals), 0, u_vals).flatten().tolist()},
+            {"header": {"parameterName": "V-component of wind", "surface1Value": level, "nx": nx, "ny": ny, "lo1": float(lons.min()), "la1": float(lats.max()), "lo2": float(lons.min()), "la2": float(lats.min()), "dx": 0.25, "dy": 0.25, "refTime": run_time, "validTime": valid_time}, "data": np.where(np.isnan(v_vals), 0, v_vals).flatten().tolist()}
         ]
     except Exception as e:
         print(f"Extraction error processing fields: {e}")
@@ -171,13 +202,13 @@ def safe_xarray_fetch(herbie_obj, search_string):
 # --- PROCESS GLOBAL WEATHER MODELS (GFS, IFS, AIFS) ---
 try:
     Hg = Herbie(gfs_date_env, model="gfs", product="pgrb2.0p25", fxx=clean_hour_env, verbose=False)
-    save_gzip(build_json("Wind", 10, safe_xarray_fetch(Hg, ":(U|V)GRD:10 m above ground:"), "u10", "v10"), f"gfs_10m_f{fhr_env}.json.gz")
+    save_gzip(build_json("Wind", 10, safe_xarray_fetch(Hg, ":(U|V)GRD:10 m above ground:"), "u10", "v10", base_date_str=gfs_date_env), f"gfs_10m_f{fhr_env}.json.gz")
     
     # Extract GFS Mean Sea Level Pressure Isobars
     gfs_mslp = safe_xarray_fetch(Hg, ":PRMSL:mean sea level:")
     if gfs_mslp is not None:
         mslp_var = "prmsl" if "prmsl" in gfs_mslp.data_vars else list(gfs_mslp.data_vars)[0]
-        save_gzip(build_json("MSLP", 0, gfs_mslp, mslp_var, None), f"gfs_mslp_f{fhr_env}.json.gz")
+        save_gzip(build_json("MSLP", 0, gfs_mslp, mslp_var, None, base_date_str=gfs_date_env), f"gfs_mslp_f{fhr_env}.json.gz")
 
     # Adaptive lookup strategy for GFS Upper Air Layers
     for p in [850, 700, 500, 200]:
@@ -185,35 +216,35 @@ try:
         if gfs_plev_ds is not None:
             gfs_u = "u" if "u" in gfs_plev_ds.data_vars else "ugrd"
             gfs_v = "v" if "v" in gfs_plev_ds.data_vars else "vgrd"
-            save_gzip(build_json("Wind", p, gfs_plev_ds, gfs_u, gfs_v, is_pressure_level=True), f"gfs_{p}_f{fhr_env}.json.gz")
+            save_gzip(build_json("Wind", p, gfs_plev_ds, gfs_u, gfs_v, is_pressure_level=True, base_date_str=gfs_date_env), f"gfs_{p}_f{fhr_env}.json.gz")
 except Exception as e: print(f"GFS Skip: {e}")
 
 try:
     He = Herbie(ifs_date_env, model="ifs", product="oper", source="ecmwf", fxx=clean_hour_env, verbose=False)
-    save_gzip(build_json("Wind", 10, safe_xarray_fetch(He, ":10(u|v):"), "u10", "v10"), f"ecmwf_10m_f{fhr_env}.json.gz")
+    save_gzip(build_json("Wind", 10, safe_xarray_fetch(He, ":10(u|v):"), "u10", "v10", base_date_str=ifs_date_env), f"ecmwf_10m_f{fhr_env}.json.gz")
     
     # Extract ECMWF MSLP Isobars
     ifs_mslp = safe_xarray_fetch(He, ":msl:")
     if ifs_mslp is not None:
         mslp_var = "msl" if "msl" in ifs_mslp.data_vars else list(ifs_mslp.data_vars)[0]
-        save_gzip(build_json("MSLP", 0, ifs_mslp, mslp_var, None), f"ecmwf_mslp_f{fhr_env}.json.gz")
+        save_gzip(build_json("MSLP", 0, ifs_mslp, mslp_var, None, base_date_str=ifs_date_env), f"ecmwf_mslp_f{fhr_env}.json.gz")
 
     for p in [850, 700, 500, 200]:
-        save_gzip(build_json("Wind", p, safe_xarray_fetch(He, f":(u|v):{p}:"), "u", "v", True), f"ecmwf_{p}_f{fhr_env}.json.gz")
+        save_gzip(build_json("Wind", p, safe_xarray_fetch(He, f":(u|v):{p}:"), "u", "v", True, base_date_str=ifs_date_env), f"ecmwf_{p}_f{fhr_env}.json.gz")
 except Exception as e: print(f"IFS Skip: {e}")
 
 try:
     Ha = Herbie(aifs_date_env, model="aifs", product="oper", source="ecmwf", fxx=clean_hour_env, verbose=False)
-    save_gzip(build_json("Wind", 10, safe_xarray_fetch(Ha, ":10(u|v):"), "u10", "v10"), f"aifs_10m_f{fhr_env}.json.gz")
+    save_gzip(build_json("Wind", 10, safe_xarray_fetch(Ha, ":10(u|v):"), "u10", "v10", base_date_str=aifs_date_env), f"aifs_10m_f{fhr_env}.json.gz")
     
     # Extract AIFS MSLP Isobars
     aifs_mslp = safe_xarray_fetch(Ha, ":msl:")
     if aifs_mslp is not None:
         mslp_var = "msl" if "msl" in aifs_mslp.data_vars else list(aifs_mslp.data_vars)[0]
-        save_gzip(build_json("MSLP", 0, aifs_mslp, mslp_var, None), f"aifs_mslp_f{fhr_env}.json.gz")
+        save_gzip(build_json("MSLP", 0, aifs_mslp, mslp_var, None, base_date_str=aifs_date_env), f"aifs_mslp_f{fhr_env}.json.gz")
 
     for p in [850, 700, 500, 200]:
-        save_gzip(build_json("Wind", p, safe_xarray_fetch(Ha, f":(u|v):{p}:"), "u", "v", True), f"aifs_{p}_f{fhr_env}.json.gz")
+        save_gzip(build_json("Wind", p, safe_xarray_fetch(Ha, f":(u|v):{p}:"), "u", "v", True, base_date_str=aifs_date_env), f"aifs_{p}_f{fhr_env}.json.gz")
 except Exception as e: print(f"AIFS Skip: {e}")
 
 
@@ -233,7 +264,7 @@ elif clean_hour_env <= 84:
             
             # --- 1. Process 10m Surface Layer (datasets[0]) ---
             ds_surface = datasets[0]
-            cwa_10m_json = build_json("Wind", 10, ds_surface, "u10", "v10")
+            cwa_10m_json = build_json("Wind", 10, ds_surface, "u10", "v10", base_date_str=cwa_date_env)
             save_gzip(cwa_10m_json, f"cwawrf_10m_f{fhr_env}.json.gz")
             
             # --- 2. Process Pressure Levels (datasets[2]) ---
@@ -249,7 +280,7 @@ elif clean_hour_env <= 84:
             for p_level, idx in level_mappings.items():
                 try:
                     ds_slice = ds_pressure.isel(isobaricInhPa=idx)
-                    cwa_p_json = build_json("Wind", p_level, ds_slice, "u", "v", is_pressure_level=False)
+                    cwa_p_json = build_json("Wind", p_level, ds_slice, "u", "v", is_pressure_level=False, base_date_str=cwa_date_env)
                     save_gzip(cwa_p_json, f"cwawrf_{p_level}_f{fhr_env}.json.gz")
                 except Exception as slice_err:
                     print(f"⚠️ Failed slicing pressure index [{idx}] for {p_level}hPa: {slice_err}")

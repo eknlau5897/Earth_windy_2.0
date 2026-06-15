@@ -76,14 +76,10 @@ while true; do
     # Mirroring CWA WRF runtime calculation exactly from your web client logic
     if [ "$CURRENT_HOUR" -ge 19 ]; then
         CWA_DATE="${CURRENT_DATE} 12:00"
-    elif [ "$CURRENT_HOUR" -ge 13 ]; then
-        CWA_DATE="${CURRENT_DATE} 06:00"
     elif [ "$CURRENT_HOUR" -ge 7 ]; then
         CWA_DATE="${CURRENT_DATE} 00:00"
-    elif [ "$CURRENT_HOUR" -ge 1 ]; then
-        CWA_DATE="${CURRENT_DATE} 18:00"
     else
-        CWA_DATE="${YESTERDAY} 18:00"
+        CWA_DATE="${YESTERDAY} 12:00"
     fi
 
     export GFS_DATE; export IFS_DATE; export AIFS_DATE; export CWA_DATE

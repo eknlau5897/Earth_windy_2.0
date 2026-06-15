@@ -22,7 +22,7 @@ for ((h=0; h<=120; h+=6)); do FORECAST_HOURS+=($(printf "%03d" "$h")); done
 for ((h=132; h<=240; h+=12)); do FORECAST_HOURS+=($(printf "%03d" "$h")); done
 
 echo "=================================================================="
-echo "   HERBIE + CWA XARRAY NATIVE DAEMON ENGINE v13"
+echo "   HERBIE + CWA XARRAY NATIVE DAEMON ENGINE v14"
 echo "=================================================================="
 
 while true; do
@@ -162,7 +162,6 @@ def build_json(param, level, ds, u_var, v_var=None, is_pressure_level=False, bas
         run_time, valid_time = get_time_strings(base_date_str, clean_hour_env)
 
         if v_var is None:
-            # Single-variable payload formatting (MSLP isobars)
             return {
                 "header": {
                     "parameterName": "Mean Sea Level Pressure", 
@@ -200,13 +199,11 @@ try:
     Hg = Herbie(gfs_date_env, model="gfs", product="pgrb2.0p25", fxx=clean_hour_env, verbose=False)
     save_gzip(build_json("Wind", 10, safe_xarray_fetch(Hg, ":(U|V)GRD:10 m above ground:"), "u10", "v10", base_date_str=gfs_date_env), f"gfs_10m_f{fhr_env}.json.gz")
     
-    # Extract GFS Mean Sea Level Pressure Isobars
     gfs_mslp = safe_xarray_fetch(Hg, ":PRMSL:mean sea level:")
     if gfs_mslp is not None:
         mslp_var = "prmsl" if "prmsl" in gfs_mslp.data_vars else list(gfs_mslp.data_vars)[0]
         save_gzip(build_json("MSLP", 0, gfs_mslp, mslp_var, None, base_date_str=gfs_date_env), f"gfs_mslp_f{fhr_env}.json.gz")
 
-    # Adaptive lookup strategy for GFS Upper Air Layers
     for p in [850, 700, 500, 200]:
         gfs_plev_ds = safe_xarray_fetch(Hg, f":(U|V)GRD:{p} mb:")
         if gfs_plev_ds is not None:
@@ -219,7 +216,6 @@ try:
     He = Herbie(ifs_date_env, model="ifs", product="oper", source="ecmwf", fxx=clean_hour_env, verbose=False)
     save_gzip(build_json("Wind", 10, safe_xarray_fetch(He, ":10(u|v):"), "u10", "v10", base_date_str=ifs_date_env), f"ecmwf_10m_f{fhr_env}.json.gz")
     
-    # Extract ECMWF MSLP Isobars
     ifs_mslp = safe_xarray_fetch(He, ":msl:")
     if ifs_mslp is not None:
         mslp_var = "msl" if "msl" in ifs_mslp.data_vars else list(ifs_mslp.data_vars)[0]
@@ -233,7 +229,6 @@ try:
     Ha = Herbie(aifs_date_env, model="aifs", product="oper", source="ecmwf", fxx=clean_hour_env, verbose=False)
     save_gzip(build_json("Wind", 10, safe_xarray_fetch(Ha, ":10(u|v):"), "u10", "v10", base_date_str=aifs_date_env), f"aifs_10m_f{fhr_env}.json.gz")
     
-    # Extract AIFS MSLP Isobars
     aifs_mslp = safe_xarray_fetch(Ha, ":msl:")
     if aifs_mslp is not None:
         mslp_var = "msl" if "msl" in aifs_mslp.data_vars else list(aifs_mslp.data_vars)[0]
@@ -244,9 +239,7 @@ try:
 except Exception as e: print(f"AIFS Skip: {e}")
 
 
-# ==========================================================
-# --- TAIWAN CWA WRF NATIVE ENGINE (EXACT INDEXING) ---
-# ==========================================================
+# --- TAIWAN CWA WRF NATIVE ENGINE ---
 if fhr_env == "000":
     print(f"ℹ️ Skipping step f000 for CWA WRF (Native operational products begin at f006).")
 elif clean_hour_env <= 84:
@@ -258,20 +251,12 @@ elif clean_hour_env <= 84:
             import cfgrib
             datasets = cfgrib.open_datasets(grib_target_path)
             
-            # --- 1. Process 10m Surface Layer (datasets[0]) ---
             ds_surface = datasets[0]
             cwa_10m_json = build_json("Wind", 10, ds_surface, "u10", "v10", base_date_str=cwa_date_env)
             save_gzip(cwa_10m_json, f"cwawrf_10m_f{fhr_env}.json.gz")
             
-            # --- 2. Process Pressure Levels (datasets[2]) ---
             ds_pressure = datasets[2]
-            
-            level_mappings = {
-                850: 2,  # datasets[2].u[2]
-                700: 3,  # datasets[2].u[3]
-                500: 4,  # datasets[2].u[4]
-                200: 8   # datasets[2].u[8]
-            }
+            level_mappings = {850: 2, 700: 3, 500: 4, 200: 8}
             
             for p_level, idx in level_mappings.items():
                 try:
@@ -291,17 +276,28 @@ elif clean_hour_env <= 84:
         print(f"⚠️ Warning: Expected CWA WRF file [{raw_grib_name}] is missing from source path.")
 EOF
 
-        if [ $? -ne 0 ]; then 
-            DATA_ERROR_OCCURRED=1
+        # FIXED EXPLICIT CONDITIONAL: 
+        # Only migrate files if Python actually generated data inside the workspace.
+        # This keeps empty configurations from breaking your web client's header loops.
+        if [ -n "$(find "$SCRATCH_DIR" -maxdepth 1 -name "*.json.gz" -print -quit)" ]; then
+            find "$SCRATCH_DIR" -type f -name "*.json.gz" -exec mv -f {} "$OUTPUT_DIR/" \;
         else
-            find "$SCRATCH_DIR" -type f -name "*.json.gz" -exec mv {} "$OUTPUT_DIR/" \;
+            echo "⚠️ [Pipeline Warning] No payload generated for forecast step f${fhr}. Keeping cache intact."
+            DATA_ERROR_OCCURRED=1
         fi
     done
 
-    # Cleanup backend indexes (.idx) left by cfgrib engine
+    # Clean transient files
     find "$CWA_INPUT_DIR" -type f -name "*.idx" -delete 2>/dev/null
     find "$SCRATCH_DIR" -type f -delete 2>/dev/null
     
-    echo "[Cycle Complete] Sleeping..."
+    if [ "$DATA_ERROR_OCCURRED" -eq 0 ]; then
+        touch "$success_lockfile"
+        echo "✅ [Cycle Complete] All forecast targets verified and published."
+    else
+        echo "⚠️ [Cycle Finished with partial errors] Lockfile suspended. Retrying next loop."
+    fi
+    
+    echo "Sleeping for next interval..."
     sleep "$CHECK_INTERVAL"
 done

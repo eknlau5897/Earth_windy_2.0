@@ -3,7 +3,7 @@ set -euo pipefail # Fail-fast shell architecture
 
 OUTPUT_DIR="./data"
 SCRATCH_DIR="./.tmp_scratch"
-CWA_INPUT_DIR="./cwa_raw_folder/"  # Point this to your folder containing 006.grb2, etc.
+CWA_INPUT_DIR="/Users/eknlau/Desktop/CWA/accu_rain/"  # Verified path
 CHECK_INTERVAL=21600 
 
 # Repository structural targets
@@ -22,7 +22,7 @@ for ((h=0; h<=120; h+=6)); do FORECAST_HOURS+=($(printf "%03d" "$h")); done
 for ((h=132; h<=240; h+=12)); do FORECAST_HOURS+=($(printf "%03d" "$h")); done
 
 echo "=================================================================="
-echo "   HERBIE + CWA XARRAY NATIVE DAEMON ENGINE v9"
+echo "   HERBIE + CWA XARRAY NATIVE DAEMON ENGINE v10"
 echo "=================================================================="
 
 while true; do
@@ -110,7 +110,6 @@ def build_json(param, level, ds, u_var, v_var=None, is_pressure_level=False):
         lon_key = 'longitude' if 'longitude' in ds.coords else 'lon'
         lat_key = 'latitude' if 'latitude' in ds.coords else 'lat'
         
-        # Handle coordinate matrix dimensions dynamically
         lons = ds[lon_key].values
         lats = ds[lat_key].values
         
@@ -130,7 +129,6 @@ def build_json(param, level, ds, u_var, v_var=None, is_pressure_level=False):
                     u_vals = u_vals[idx]
                     v_vals = v_vals[idx]
 
-        # Flip arrays vertically if latitudes flow from South to North
         if len(lats.shape) == 1 and lats[0] < lats[-1]:
             u_vals = np.flipud(u_vals)
             if v_var: v_vals = np.flipud(v_vals)
@@ -167,14 +165,16 @@ except Exception as e: print(f"GFS Skip: {e}")
 
 try:
     He = Herbie(ifs_date_env, model="ifs", product="oper", source="ecmwf", fxx=clean_hour_env, verbose=False)
-    save_gzip(build_json("Wind", 10, safe_xarray_fetch(He, ":10(u|v):"), "10u", "10v"), f"ecmwf_10m_f{fhr_env}.json.gz")
+    # Fixed keys from '10u'/'10v' to 'u10'/'v10' to align with the updated ECMWF structure
+    save_gzip(build_json("Wind", 10, safe_xarray_fetch(He, ":10(u|v):"), "u10", "v10"), f"ecmwf_10m_f{fhr_env}.json.gz")
     for p in [850, 700, 500, 200]:
         save_gzip(build_json("Wind", p, safe_xarray_fetch(He, f":(u|v):{p}:"), "u", "v", True), f"ecmwf_{p}_f{fhr_env}.json.gz")
 except Exception as e: print(f"IFS Skip: {e}")
 
 try:
     Ha = Herbie(aifs_date_env, model="aifs", product="oper", source="ecmwf", fxx=clean_hour_env, verbose=False)
-    save_gzip(build_json("Wind", 10, safe_xarray_fetch(Ha, ":10(u|v):"), "10u", "10v"), f"aifs_10m_f{fhr_env}.json.gz")
+    # Fixed keys from '10u'/'10v' to 'u10'/'v10' here as well
+    save_gzip(build_json("Wind", 10, safe_xarray_fetch(Ha, ":10(u|v):"), "u10", "v10"), f"aifs_10m_f{fhr_env}.json.gz")
     for p in [850, 700, 500, 200]:
         save_gzip(build_json("Wind", p, safe_xarray_fetch(Ha, f":(u|v):{p}:"), "u", "v", True), f"aifs_{p}_f{fhr_env}.json.gz")
 except Exception as e: print(f"AIFS Skip: {e}")
@@ -191,38 +191,32 @@ elif clean_hour_env <= 84:
 
     if os.path.exists(grib_target_path):
         try:
-            # Open all datasets inside the GRIB2 file natively via cfgrib
             import cfgrib
             datasets = cfgrib.open_datasets(grib_target_path)
             
-            # --- 1. Process 10m Surface Layer (data[0]) ---
+            # --- 1. Process 10m Surface Layer (datasets[0]) ---
             ds_surface = datasets[0]
             cwa_10m_json = build_json("Wind", 10, ds_surface, "u10", "v10")
             save_gzip(cwa_10m_json, f"cwawrf_10m_f{fhr_env}.json.gz")
             
-            # --- 2. Process Pressure Levels (data[2]) ---
+            # --- 2. Process Pressure Levels (datasets[2]) ---
             ds_pressure = datasets[2]
             
-            # We map your requested array indices directly to their respective pressure levels
             level_mappings = {
-                850: 2,  # data[2].u[2]
-                700: 3,  # data[2].u[3]
-                500: 4,  # data[2].u[4]
-                200: 8   # data[2].u[8]
+                850: 2,  # datasets[2].u[2]
+                700: 3,  # datasets[2].u[3]
+                500: 4,  # datasets[2].u[4]
+                200: 8   # datasets[2].u[8]
             }
             
             for p_level, idx in level_mappings.items():
                 try:
-                    # Slice the exact vertical layer out using the coordinate index
-                    # This extracts data[2].u[idx] and data[2].v[idx]
                     ds_slice = ds_pressure.isel(isobaricInhPa=idx)
-                    
                     cwa_p_json = build_json("Wind", p_level, ds_slice, "u", "v", is_pressure_level=False)
                     save_gzip(cwa_p_json, f"cwawrf_{p_level}_f{fhr_env}.json.gz")
                 except Exception as slice_err:
                     print(f"⚠️ Failed slicing pressure index [{idx}] for {p_level}hPa: {slice_err}")
             
-            # Clean up open file handles
             for ds in datasets:
                 ds.close()
                 

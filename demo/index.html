@@ -27,8 +27,9 @@
         .checkbox-container input { cursor: pointer; }
         #timeDisplayPanel {
             margin-top: 10px; padding-top: 10px; border-top: 1px solid #334155;
-            font-size: 12px; color: #38bdf8; display: flex; flex-direction: column; gap: 2px;
+            font-size: 12px; color: #38bdf8; display: flex; flex-direction: column; gap: 4px;
         }
+        .time-label { color: #94a3b8; font-size: 11px; }
     </style>
 </head>
 <body>
@@ -82,7 +83,8 @@
     </div>
 
     <div id="timeDisplayPanel">
-        <span id="validTimeVal">Valid: Initializing...</span>
+        <div><span class="time-label">CYCLE:</span> <span id="runTimeVal" style="color: #fff;">Loading...</span></div>
+        <div><span class="time-label">VALID:</span> <span id="validTimeVal">Loading...</span></div>
     </div>
 </div>
 
@@ -121,37 +123,18 @@
 
     initCoastlines();
 
-    function calculateOperationalBaseTime(model) {
-        const now = new Date();
-        const utcHr = now.getUTCHours();
-        let base = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    /**
+     * Directly updates display tags using extracted backend JSON header metadata strings
+     */
+    function updateMetadataTimeDisplay(header) {
+        if (!header) return;
         
-        if (model === 'gfs') {
-            if (utcHr >= 6 && utcHr < 18) base.setUTCHours(0);
-            else if (utcHr >= 18) base.setUTCHours(12);
-            else { base.setUTCDate(base.getUTCDate() - 1); base.setUTCHours(12); }
-        } else if (model === 'ecmwf' || model === 'aifs') {
-            let threshold = model === 'ecmwf' ? 9 : 7;
-            if (utcHr >= threshold && utcHr < (threshold + 12)) base.setUTCHours(0);
-            else { base.setUTCHours(12); if (utcHr < threshold) base.setUTCDate(base.getUTCDate() - 1); }
-        } else if (model === 'cwawrf') {
-            if (utcHr >= 19) base.setUTCHours(12);
-            else if (utcHr >= 13) base.setUTCHours(6);
-            else if (utcHr >= 7) base.setUTCHours(0);
-            else if (utcHr >= 1) base.setUTCHours(18);
-            else { base.setUTCDate(base.getUTCDate() - 1); base.setUTCHours(18); }
-        }
-        return base;
-    }
+        // Extract fields safely (handles GFS, ECMWF, and WRF dictionary variations)
+        const runTime = header.refTime || header.runtime || "N/A";
+        const validTime = header.validTime || header.validtime || "N/A";
 
-    function updateValidTimeDisplay(modelType, addedHours, directHeaderTime = null) { 
-        if (directHeaderTime) {
-            document.getElementById('validTimeVal').innerText = `Valid: ${directHeaderTime}`; 
-            return;
-        }
-        const baseTime = calculateOperationalBaseTime(modelType); 
-        const formattedDisplay = `${baseTime.getUTCFullYear()}-${String(baseTime.getUTCMonth() + 1).padStart(2, '0')}-${String(baseTime.getUTCDate()).padStart(2, '0')} ${String(baseTime.getUTCHours()).padStart(2, '0')}Z +${addedHours}hr`; 
-        document.getElementById('validTimeVal').innerText = `Run: ${formattedDisplay}`; 
+        document.getElementById('runTimeVal').innerText = runTime;
+        document.getElementById('validTimeVal').innerText = validTime;
     }
 
     function fetchGzJson(url, token, successCallback) {
@@ -190,15 +173,16 @@
         const activeIsobars = document.getElementById('showIsobars').checked; 
         const activeRadar = document.getElementById('showRadar').checked;
 
-        updateValidTimeDisplay(model, targetHour); 
-
-        // 1. Process Wind and Initialize Particle Simulation
+        // 1. Process Wind Array Data (U/V Components stacked in array list)
         if (activeWindSpeed || document.getElementById('showParticles').checked) { 
             fetchGzJson(`${cdnBase}/${model}_${level}_f${targetHour}.json.gz`, localToken, data => { 
                 activeDataset = data; 
-                if (data && data[0] && data[0].header && data[0].header.validTime) {
-                    updateValidTimeDisplay(model, targetHour, data[0].header.validTime);
+                
+                // Extract metadata from the first parameter layer (U component)
+                if (data && data[0] && data[0].header) {
+                    updateMetadataTimeDisplay(data[0].header);
                 }
+                
                 renderVelocityCanvasStack(data, activeWindSpeed); 
                 if (document.getElementById('showParticles').checked) {
                     initParticleEngine(data);
@@ -206,11 +190,12 @@
             }); 
         } 
         
-        // 2. Process MSLP Isobars
+        // 2. Process MSLP Isobars (Single flat dictionary setup)
         if (activeIsobars && model !== 'cwawrf') { 
             fetchGzJson(`${cdnBase}/${model}_mslp_f${targetHour}.json.gz`, localToken, data => {
-                if (data && data.header && data.header.validTime && !activeWindSpeed) {
-                    updateValidTimeDisplay(model, targetHour, data.header.validTime);
+                // If wind grid is unchecked, extract time headers from the isobar dataset instead
+                if (data && data.header && !activeWindSpeed) {
+                    updateMetadataTimeDisplay(data.header);
                 }
                 renderIsobarContours(data);
             }); 
@@ -220,7 +205,7 @@
         if (activeRadar) updateRadarOverlay();
     }
 
-    // --- RESTORED PARTICLE SIMULATION ENGINE ---
+    // --- DYNAMIC WIND PARTICLE SIMULATION ENGINE ---
     function initParticleEngine(windData) {
         clearParticleEngine();
         if (!windData || !windData[0]) return;
@@ -228,7 +213,6 @@
         const uField = windData[0];
         const { lo1, la1, nx, ny, dx, dy } = uField.header;
         
-        // Handle bounding boxes with wrap-around logic
         let w = lo1 > 180 ? lo1 - 360 : lo1;
         let e = w + (nx * dx);
         let n = la1;
@@ -236,15 +220,14 @@
 
         particlePrimitives = viewer.scene.primitives.add(new Cesium.PointPrimitiveCollection());
 
-        // Initialize points at random positions inside the domain
         for (let i = 0; i < MAX_PARTICLES; i++) {
             const lon = w + Math.random() * (e - w);
             const lat = s + Math.random() * (n - s);
             
             const pt = particlePrimitives.add({
-                position: Cesium.Cartesian3.fromDegrees(lon, lat, 100),
-                color: Cesium.Color.WHITE.withAlpha(0.6),
-                pointSize: 2.0
+                position: Cesium.Cartesian3.fromDegrees(lon, lat, 15000),
+                color: Cesium.Color.WHITE.withAlpha(0.8),
+                pointSize: 2.5 
             });
 
             particleCollection.push({
@@ -252,7 +235,6 @@
             });
         }
 
-        // Kinetic advection animation loop
         particleAnimationLoop = setInterval(() => {
             const uData = windData[0].data;
             const vData = windData[1].data;
@@ -261,7 +243,6 @@
                 const p = particleCollection[i];
                 p.age++;
 
-                // Lookup vector coordinate mappings
                 let xIdx = Math.floor(((p.lon - w) / (e - w)) * nx);
                 let yIdx = Math.floor(((n - p.lat) / (n - s)) * ny);
                 let dataIdx = yIdx * nx + xIdx;
@@ -270,25 +251,22 @@
                     const u = uData[dataIdx];
                     const v = vData[dataIdx];
                     
-                    // Degree scaling parameter
-                    p.lon += (u * 0.00015);
-                    p.lat += (v * 0.00015);
+                    p.lon += (u * 0.00012); 
+                    p.lat += (v * 0.00012);
                     
-                    p.primitive.position = Cesium.Cartesian3.fromDegrees(p.lon, p.lat, 100);
+                    p.primitive.position = Cesium.Cartesian3.fromDegrees(p.lon, p.lat, 15000);
                     
-                    // Fade out aging particles smoothly
                     let alpha = 1.0 - (p.age / PARTICLE_MAX_AGE);
-                    p.primitive.color = Cesium.Color.WHITE.withAlpha(alpha * 0.7);
+                    p.primitive.color = Cesium.Color.WHITE.withAlpha(alpha * 0.9);
                 } else {
-                    // Respawn expired or out-of-bounds stream vectors
                     p.lon = w + Math.random() * (e - w);
                     p.lat = s + Math.random() * (n - s);
                     p.age = 0;
-                    p.primitive.position = Cesium.Cartesian3.fromDegrees(p.lon, p.lat, 100);
-                    p.primitive.color = Cesium.Color.WHITE.withAlpha(0.6);
+                    p.primitive.position = Cesium.Cartesian3.fromDegrees(p.lon, p.lat, 15000);
+                    p.primitive.color = Cesium.Color.WHITE.withAlpha(0.8);
                 }
             }
-        }, 35);
+        }, 30);
     }
 
     function clearParticleEngine() {
@@ -322,18 +300,15 @@
     }
 
     function initCoastlines() {
-    // Switched to an optimized, highly available CDN delivery target for world maps
-    Cesium.GeoJsonDataSource.load('https://cdn.jsdelivr.net/gh/nvkelso/natural-earth-vector@master/geojson/ne_110m_coastline.geojson', {
-        stroke: Cesium.Color.fromCssColorString('#475569'), // Slate-500 line
-        fill: Cesium.Color.TRANSPARENT,
-        strokeWidth: 1.5
-    }).then(dataSource => {
-        coastlineDataSource = dataSource; 
-        viewer.dataSources.add(dataSource);
-    }).catch(err => {
-        // Fallback error boundary: Prevents a missing map file from crashing the entire app
-        console.warn("Coastline vector failed to load, bypassing to preserve weather rendering:", err);
-    });
+        Cesium.GeoJsonDataSource.load('https://cdn.jsdelivr.net/gh/nvkelso/natural-earth-vector@master/geojson/ne_110m_coastline.geojson', {
+            stroke: Cesium.Color.fromCssColorString('#475569'), fill: Cesium.Color.TRANSPARENT, strokeWidth: 1.5
+        }).then(dataSource => {
+            coastlineDataSource = dataSource; 
+            viewer.dataSources.add(dataSource);
+            enforceLayerOrdering();
+        }).catch(err => {
+            console.warn("Coastline vector mirror failed to load:", err);
+        });
     }
 
     function toggleCoastlines() {
@@ -352,12 +327,12 @@
             for (let x = 0; x < nx; x++) {
                 const idx = y * nx + x;
                 const speed = Math.sqrt(uField.data[idx]**2 + vField.data[idx]**2);
-                const alpha = Math.min(speed / 35.0, 1.0);
+                const alpha = Math.min(speed / 45.0, 1.0);
                 const pIdx = idx * 4;
-                imgData.data[pIdx] = Math.round(alpha * 255);
-                imgData.data[pIdx+1] = Math.round(Math.max(0, 1.0 - alpha) * 150);
-                imgData.data[pIdx+2] = 255;
-                imgData.data[pIdx+3] = Math.round(alpha * 180);
+                imgData.data[pIdx] = Math.round(alpha * 200);
+                imgData.data[pIdx+1] = Math.round(Math.max(0, 1.0 - alpha) * 100);
+                imgData.data[pIdx+2] = 220;
+                imgData.data[pIdx+3] = Math.round(alpha * 110); 
             }
         }
         ctx.putImageData(imgData, 0, 0);
@@ -415,6 +390,7 @@
         if (velocityTextureLayer) viewer.imageryLayers.raiseToTop(velocityTextureLayer);
         if (radarLayer) viewer.imageryLayers.raiseToTop(radarLayer);
         if (combinedOutputLayer) viewer.imageryLayers.raiseToTop(combinedOutputLayer);
+        if (coastlineDataSource) viewer.dataSources.raiseToTop(coastlineDataSource);
     }
 
     updateWeatherLayers();

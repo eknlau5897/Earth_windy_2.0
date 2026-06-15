@@ -17,12 +17,13 @@ mkdir -p "$CWA_INPUT_DIR"
 
 export HERBIE_DATA="$SCRATCH_DIR"
 
-FORECAST_HOURS=()
-for ((h=0; h<=120; h+=6)); do FORECAST_HOURS+=($(printf "%03d" "$h")); done
+# Prioritize f000 by keeping it at the very front of the execution queue
+FORECAST_HOURS=("000")
+for ((h=6; h<=120; h+=6)); do FORECAST_HOURS+=($(printf "%03d" "$h")); done
 for ((h=132; h<=240; h+=12)); do FORECAST_HOURS+=($(printf "%03d" "$h")); done
 
 echo "=================================================================="
-echo "   HERBIE + CWA XARRAY NATIVE DAEMON ENGINE v13"
+echo "   HERBIE + CWA XARRAY NATIVE DAEMON ENGINE v14 (Optimized)"
 echo "=================================================================="
 
 while true; do
@@ -73,7 +74,6 @@ while true; do
         fi
     fi
 
-    # Mirroring CWA WRF runtime calculation exactly from your web client logic
     if [ "$CURRENT_HOUR" -ge 19 ]; then
         CWA_DATE="${CURRENT_DATE} 12:00"
     elif [ "$CURRENT_HOUR" -ge 7 ]; then
@@ -116,14 +116,14 @@ fhr_env = os.environ.get("fhr")
 scratch_dir = os.environ.get("SCRATCH_DIR", "./.tmp_scratch")
 cwa_input_dir = os.environ.get("CWA_INPUT_DIR", "./cwa_raw_folder")
 
+# FIXED: Outputs strict standard ISO-8601 UTC strings directly to the JSON payload
 def get_time_strings(base_date_str, fhr_int):
-    """Calculates explicit ISO strings for baseline run and forecast target validity."""
     if not base_date_str:
         return "N/A", "N/A"
     try:
         base_dt = datetime.strptime(base_date_str, "%Y-%m-%d %H:%M")
         valid_dt = base_dt + timedelta(hours=fhr_int)
-        return base_dt.strftime("%Y-%m-%d %H:%M UTC"), valid_dt.strftime("%Y-%m-%d %H:%M UTC")
+        return base_dt.strftime("%Y-%m-%dT%H:%M:00Z"), valid_dt.strftime("%Y-%m-%dT%H:%M:00Z")
     except Exception:
         return base_date_str, "N/A"
 
@@ -162,7 +162,6 @@ def build_json(param, level, ds, u_var, v_var=None, is_pressure_level=False, bas
         run_time, valid_time = get_time_strings(base_date_str, clean_hour_env)
 
         if v_var is None:
-            # Single-variable payload formatting (MSLP isobars)
             return {
                 "header": {
                     "parameterName": "Mean Sea Level Pressure", 
@@ -178,7 +177,7 @@ def build_json(param, level, ds, u_var, v_var=None, is_pressure_level=False, bas
 
         return [
             {"header": {"parameterName": "U-component of wind", "surface1Value": level, "nx": nx, "ny": ny, "lo1": float(lons.min()), "la1": float(lats.max()), "lo2": float(lons.max()), "la2": float(lats.min()), "dx": 0.25, "dy": 0.25, "refTime": run_time, "validTime": valid_time}, "data": np.where(np.isnan(u_vals), 0, u_vals).flatten().tolist()},
-            {"header": {"parameterName": "V-component of wind", "surface1Value": level, "nx": nx, "ny": ny, "lo1": float(lons.min()), "la1": float(lats.max()), "lo2": float(lons.min()), "la2": float(lats.min()), "dx": 0.25, "dy": 0.25, "refTime": run_time, "validTime": valid_time}, "data": np.where(np.isnan(v_vals), 0, v_vals).flatten().tolist()}
+            {"header": {"parameterName": "V-component of wind", "surface1Value": level, "nx": nx, "ny": ny, "lo1": float(lons.min()), "la1": float(lats.max()), "lo2": float(lons.max()), "la2": float(lats.min()), "dx": 0.25, "dy": 0.25, "refTime": run_time, "validTime": valid_time}, "data": np.where(np.isnan(v_vals), 0, v_vals).flatten().tolist()}
         ]
     except Exception as e:
         print(f"Extraction error processing fields: {e}")
@@ -200,13 +199,11 @@ try:
     Hg = Herbie(gfs_date_env, model="gfs", product="pgrb2.0p25", fxx=clean_hour_env, verbose=False)
     save_gzip(build_json("Wind", 10, safe_xarray_fetch(Hg, ":(U|V)GRD:10 m above ground:"), "u10", "v10", base_date_str=gfs_date_env), f"gfs_10m_f{fhr_env}.json.gz")
     
-    # Extract GFS Mean Sea Level Pressure Isobars
     gfs_mslp = safe_xarray_fetch(Hg, ":PRMSL:mean sea level:")
     if gfs_mslp is not None:
         mslp_var = "prmsl" if "prmsl" in gfs_mslp.data_vars else list(gfs_mslp.data_vars)[0]
         save_gzip(build_json("MSLP", 0, gfs_mslp, mslp_var, None, base_date_str=gfs_date_env), f"gfs_mslp_f{fhr_env}.json.gz")
 
-    # Adaptive lookup strategy for GFS Upper Air Layers
     for p in [850, 700, 500, 200]:
         gfs_plev_ds = safe_xarray_fetch(Hg, f":(U|V)GRD:{p} mb:")
         if gfs_plev_ds is not None:
@@ -219,7 +216,6 @@ try:
     He = Herbie(ifs_date_env, model="ifs", product="oper", source="ecmwf", fxx=clean_hour_env, verbose=False)
     save_gzip(build_json("Wind", 10, safe_xarray_fetch(He, ":10(u|v):"), "u10", "v10", base_date_str=ifs_date_env), f"ecmwf_10m_f{fhr_env}.json.gz")
     
-    # Extract ECMWF MSLP Isobars
     ifs_mslp = safe_xarray_fetch(He, ":msl:")
     if ifs_mslp is not None:
         mslp_var = "msl" if "msl" in ifs_mslp.data_vars else list(ifs_mslp.data_vars)[0]
@@ -233,7 +229,6 @@ try:
     Ha = Herbie(aifs_date_env, model="aifs", product="oper", source="ecmwf", fxx=clean_hour_env, verbose=False)
     save_gzip(build_json("Wind", 10, safe_xarray_fetch(Ha, ":10(u|v):"), "u10", "v10", base_date_str=aifs_date_env), f"aifs_10m_f{fhr_env}.json.gz")
     
-    # Extract AIFS MSLP Isobars
     aifs_mslp = safe_xarray_fetch(Ha, ":msl:")
     if aifs_mslp is not None:
         mslp_var = "msl" if "msl" in aifs_mslp.data_vars else list(aifs_mslp.data_vars)[0]
@@ -243,12 +238,9 @@ try:
         save_gzip(build_json("Wind", p, safe_xarray_fetch(Ha, f":(u|v):{p}:"), "u", "v", True, base_date_str=aifs_date_env), f"aifs_{p}_f{fhr_env}.json.gz")
 except Exception as e: print(f"AIFS Skip: {e}")
 
-
-# ==========================================================
-# --- TAIWAN CWA WRF NATIVE ENGINE (EXACT INDEXING) ---
-# ==========================================================
+# --- TAIWAN CWA WRF NATIVE ENGINE ---
 if fhr_env == "000":
-    print(f"ℹ️ Skipping step f000 for CWA WRF (Native operational products begin at f006).")
+    pass
 elif clean_hour_env <= 84:
     raw_grib_name = f"{fhr_env}.grb2"
     grib_target_path = os.path.join(cwa_input_dir, raw_grib_name)
@@ -258,20 +250,12 @@ elif clean_hour_env <= 84:
             import cfgrib
             datasets = cfgrib.open_datasets(grib_target_path)
             
-            # --- 1. Process 10m Surface Layer (datasets[0]) ---
             ds_surface = datasets[0]
             cwa_10m_json = build_json("Wind", 10, ds_surface, "u10", "v10", base_date_str=cwa_date_env)
             save_gzip(cwa_10m_json, f"cwawrf_10m_f{fhr_env}.json.gz")
             
-            # --- 2. Process Pressure Levels (datasets[2]) ---
             ds_pressure = datasets[2]
-            
-            level_mappings = {
-                850: 2,  # datasets[2].u[2]
-                700: 3,  # datasets[2].u[3]
-                500: 4,  # datasets[2].u[4]
-                200: 8   # datasets[2].u[8]
-            }
+            level_mappings = {850: 2, 700: 3, 500: 4, 200: 8}
             
             for p_level, idx in level_mappings.items():
                 try:
@@ -283,22 +267,19 @@ elif clean_hour_env <= 84:
             
             for ds in datasets:
                 ds.close()
-                
-            print(f"Successfully compiled indexed CWA WRF structures for step f{fhr_env}")
         except Exception as e:
-            print(f"⚠️ CWA WRF engine parsing breakdown at step f{fhr_env}: {e}")
-    else:
-        print(f"⚠️ Warning: Expected CWA WRF file [{raw_grib_name}] is missing from source path.")
+            print(f"⚠️ CWA WRF engine parsing breakdown: {e}")
 EOF
 
         if [ $? -ne 0 ]; then 
             DATA_ERROR_OCCURRED=1
         else
-            find "$SCRATCH_DIR" -type f -name "*.json.gz" -exec mv {} "$OUTPUT_DIR/" \;
+            # OPTIMIZATION: Shift parsed files to production folder IMMEDIATELY 
+            # as they finish, rather than waiting for the entire daemon loop to close.
+            find "$SCRATCH_DIR" -type f -name "*.json.gz" -exec mv -f {} "$OUTPUT_DIR/" \;
         fi
     done
 
-    # Cleanup backend indexes (.idx) left by cfgrib engine
     find "$CWA_INPUT_DIR" -type f -name "*.idx" -delete 2>/dev/null
     find "$SCRATCH_DIR" -type f -delete 2>/dev/null
     

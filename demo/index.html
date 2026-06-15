@@ -439,29 +439,62 @@ function renderVelocityCanvasStack(jsonData, drawHeatmap) {
 } 
 
 function renderIsobarContours(jsonData) { 
-    const { data, header } = jsonData, { nx, ny, lo1, la1, dx, dy } = header; 
-    const canvasT = document.createElement('canvas'); canvasT.width = 2048; canvasT.height = 1024; const ctxT = canvasT.getContext('2d'); 
-    ctxT.lineWidth = 1.2; ctxT.textBaseline = 'middle'; ctxT.textAlign = 'center'; 
+    if (!jsonData || !jsonData.data) return;
+    
+    const { data, header } = jsonData;
+    const { nx, ny, lo1, la1, dx, dy } = header; 
+    
+    const canvasT = document.createElement('canvas'); 
+    canvasT.width = 2048; 
+    canvasT.height = 1024; 
+    const ctxT = canvasT.getContext('2d'); 
+    
+    ctxT.lineWidth = 1.4; 
+    ctxT.textBaseline = 'middle'; 
+    ctxT.textAlign = 'center'; 
 
+    // Sweep across typical atmospheric sea-level pressure ranges (in Pascals)
     for (let p = 97000; p <= 104000; p += 400) { 
-        ctxT.strokeStyle = 'rgba(255, 255, 255, 0.4)'; ctxT.fillStyle = 'rgba(255, 255, 255, 0.6)'; ctxT.font = '11px sans-serif'; 
+        // FIX: Set colors to an explicit bright red for high visibility over the dark canvas
+        ctxT.strokeStyle = 'rgba(255, 59, 48, 0.7)'; 
+        ctxT.fillStyle = 'rgba(255, 69, 58, 1.0)'; 
+        ctxT.font = 'bold 12px monospace'; 
+        
         for (let y = 0; y < ny - 1; y++) { 
             for (let x = 0; x < nx - 1; x++) { 
-                const i = y * nx + x; const pts = getCellIntersections(x, y, data[i], data[i+1], data[i+nx], data[i+nx+1], p); 
+                const i = y * nx + x; 
+                const pts = getCellIntersections(x, y, data[i], data[i+1], data[i+nx], data[i+nx+1], p); 
+                
                 if (pts.length >= 2) { 
-                    const x1 = (pts[0].x / nx) * canvasT.width, y1 = (pts[0].y / ny) * canvasT.height; 
-                    const x2 = (pts[1].x / nx) * canvasT.width, y2 = (pts[1].y / ny) * canvasT.height; 
-                    if (x % 45 === 0 && y % 45 === 0) ctxT.fillText(String(Math.round(p/100)), x1, y1); 
-                    else { ctxT.beginPath(); ctxT.moveTo(x1, y1); ctxT.lineTo(x2, y2); stroke(); } 
+                    const x1 = (pts[0].x / nx) * canvasT.width;
+                    const y1 = (pts[0].y / ny) * canvasT.height; 
+                    const x2 = (pts[1].x / nx) * canvasT.width;
+                    const y2 = (pts[1].y / ny) * canvasT.height; 
+                    
+                    // Label spacing interval logic
+                    if (x % 50 === 0 && y % 50 === 0) {
+                        ctxT.fillText(String(Math.round(p / 100)), x1, y1); 
+                    } else { 
+                        ctxT.beginPath(); 
+                        ctxT.moveTo(x1, y1); 
+                        ctxT.lineTo(x2, y2); 
+                        ctxT.stroke(); // FIX: Added ctxT context modifier to prevent script crash
+                    } 
                 } 
             } 
         } 
     } 
-    let w = lo1 > 180 ? lo1 - 360 : lo1, e = (lo1 + (nx * dx)) > 180 ? (lo1 + (nx * dx)) - 360 : (lo1 + (nx * dx)); if (e <= w) e += 360; 
-    combinedOutputLayer = viewer.imageryLayers.addImageryProvider(new Cesium.SingleTileImageryProvider({ url: canvasT.toDataURL(), rectangle: Cesium.Rectangle.fromDegrees(w, la1 - (ny * dy), e, la1) })); 
+    
+    let w = lo1 > 180 ? lo1 - 360 : lo1;
+    let e = (lo1 + (nx * dx)) > 180 ? (lo1 + (nx * dx)) - 360 : (lo1 + (nx * dx)); 
+    if (e <= w) e += 360; 
+    
+    combinedOutputLayer = viewer.imageryLayers.addImageryProvider(new Cesium.SingleTileImageryProvider({ 
+        url: canvasT.toDataURL(), 
+        rectangle: Cesium.Rectangle.fromDegrees(w, la1 - (ny * dy), e, la1) 
+    })); 
     enforceLayerOrdering(); 
-} 
-
+}
 function getCellIntersections(x, y, vTL, vTR, vBL, vBR, iso) { 
     let pts = []; 
     if ((vTL >= iso) !== (vTR >= iso)) pts.push({ x: x + (iso - vTL) / (vTR - vTL), y }); 

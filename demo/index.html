@@ -73,22 +73,12 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16p
 <div id="cesiumContainer"></div>
 <canvas id="particleCanvas"></canvas>
 <script>
-// Prevent 401 unauthenticated Ion network requests from crashing the rendering thread
 Cesium.Ion.defaultAccessToken = ''; 
 
 const viewer = new Cesium.Viewer('cesiumContainer', {
-    imageryProvider: false,
-    baseLayerPicker: false,
-    geocoder: false,
-    homeButton: false, 
-    infoBox: false,
-    navigationHelpButton: false,
-    sceneModePicker: true,
-    timeline: false,
-    animation: false,
-    skyBox: false,
-    skyAtmosphere: false,
-    requestRenderMode: false
+    imageryProvider: false, baseLayerPicker: false, geocoder: false, homeButton: false, 
+    infoBox: false, navigationHelpButton: false, sceneModePicker: true, timeline: false,
+    animation: false, skyBox: false, skyAtmosphere: false, requestRenderMode: false
 });
 
 const canvas = document.getElementById('particleCanvas');
@@ -129,8 +119,7 @@ function getNCARColor(speedMS) {
     const knots = speedMS / 0.514444;
     if (knots <= 0.5) return null;
     let idx = Math.min(Math.floor((knots / 120) * 255), 255);
-    let pIdx = idx * 4;
-    return [ncarPalette[pIdx], ncarPalette[pIdx+1], ncarPalette[pIdx+2], ncarPalette[pIdx+3]]; 
+    return [ncarPalette[idx*4], ncarPalette[idx*4+1], ncarPalette[idx*4+2], ncarPalette[idx*4+3]]; 
 }
 
 let particles = [];
@@ -146,34 +135,27 @@ function initParticles() {
 }
 
 function getGridValue(lon, lat) {
-    if(!activeDataset) return null;
+    if(!activeDataset || !Array.isArray(activeDataset)) return null;
     const header = activeDataset[0].header;
     let uData = activeDataset[0].data;
     let vData = activeDataset[1].data;
     let adjustedLon = lon;
     if (header.lo1 >= 0 && lon < 0) adjustedLon += 360;
-    if (adjustedLon < header.lo1 || adjustedLon > header.lo2 || lat < header.la2 || lat > header.la1) { return null; }
+    if (adjustedLon < header.lo1 || adjustedLon > header.lo2 || lat < header.la2 || lat > header.la1) return null;
     const x = ((adjustedLon - header.lo1) / (header.lo2 - header.lo1)) * (header.nx - 1);
     const y = ((header.la1 - lat) / (header.la1 - header.la2)) * (header.ny - 1);
-    const x0 = Math.floor(x);
-    const x1 = Math.min(x0 + 1, header.nx - 1);
-    const y0 = Math.floor(y);
-    const y1 = Math.min(y0 + 1, header.ny - 1);
-    const i00 = y0 * header.nx + x0;
-    const i10 = y0 * header.nx + x1;
-    const i01 = y1 * header.nx + x0;
-    const i11 = y1 * header.nx + x1;
-    const wx1 = x - x0;
-    const wx0 = 1 - wx1;
-    const wy1 = y - y0;
-    const wy0 = 1 - wy1;
+    const x0 = Math.floor(x), x1 = Math.min(x0 + 1, header.nx - 1);
+    const y0 = Math.floor(y), y1 = Math.min(y0 + 1, header.ny - 1);
+    const i00 = y0 * header.nx + x0, i10 = y0 * header.nx + x1;
+    const i01 = y1 * header.nx + x0, i11 = y1 * header.nx + x1;
+    const wx1 = x - x0, wx0 = 1 - wx1, wy1 = y - y0, wy0 = 1 - wy1;
     const u = uData[i00]*wx0*wy0 + uData[i10]*wx1*wy0 + uData[i01]*wx0*wy1 + uData[i11]*wx1*wy1;
     const v = vData[i00]*wx0*wy0 + vData[i10]*wx1*wy0 + vData[i01]*wx0*wy1 + vData[i11]*wx1*wy1;
     return { u, v }; 
 }
 
 function updateAndDrawParticles() {
-    if (!document.getElementById('showParticles').checked || !activeDataset) { ctx.clearRect(0, 0, canvas.width, canvas.height); return; }
+    if (!document.getElementById('showParticles').checked || !activeDataset || !Array.isArray(activeDataset)) { ctx.clearRect(0, 0, canvas.width, canvas.height); return; }
     ctx.save(); ctx.fillStyle = "rgba(0, 0, 0, 0.92)"; ctx.globalCompositeOperation = "destination-in"; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.restore();
     ctx.globalCompositeOperation = "source-over"; ctx.lineWidth = 1.2; ctx.strokeStyle = "rgba(255, 255, 255, 0.65)";
     for(let i = 0; i < particles.length; i++) {
@@ -182,16 +164,14 @@ function updateAndDrawParticles() {
         const cartesian = viewer.camera.pickEllipsoid(new Cesium.Cartesian2(p.x, p.y), viewer.scene.globe.ellipsoid);
         if (!cartesian) { p.age = particleMaxAge; continue; }
         const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
-        const lon = Cesium.Math.toDegrees(cartographic.longitude);
-        const lat = Cesium.Math.toDegrees(cartographic.latitude);
+        const lon = Cesium.Math.toDegrees(cartographic.longitude), lat = Cesium.Math.toDegrees(cartographic.latitude);
         const wind = getGridValue(lon, lat);
         if (!wind) { p.age = particleMaxAge; continue; }
-        const endLon = lon + wind.u * speedScale * 0.05;
-        const endLat = lat + wind.v * speedScale * 0.05;
+        const endLon = lon + wind.u * speedScale * 0.05, endLat = lat + wind.v * speedScale * 0.05;
         const endCartesian = Cesium.Cartesian3.fromDegrees(endLon, endLat, cartographic.height);
         const screenPos2 = viewer.scene.cartesianToCanvasCoordinates(endCartesian);
         if(!screenPos2) { p.age = particleMaxAge; continue; }
-        const dx = screenPos2.x - p.x; const dy = screenPos2.y - p.y;
+        const dx = screenPos2.x - p.x, dy = screenPos2.y - p.y;
         ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x + dx, p.y + dy); ctx.stroke();
         p.x += dx; p.y += dy; p.age++;
     } 
@@ -200,7 +180,7 @@ function updateAndDrawParticles() {
 viewer.scene.preRender.addEventListener(function() { updateAndDrawParticles(); }); 
 initParticles();
 
-// TELEMETRY ENGINE: Reads and parses your shell script's exact JSON header formatting
+// TELEMETRY TRANSLATOR: Safely processes custom Python string timestamps into clean UTC text
 function updateTrueTelemetryDisplay(header, targetHour) {
     if (!header) return;
     
@@ -214,11 +194,9 @@ function updateTrueTelemetryDisplay(header, targetHour) {
         if (!timeStr) return "N/A";
         let clean = String(timeStr).trim();
         
-        // Strip trailing " UTC" appended by the Python daemon
         if (clean.endsWith(" UTC")) {
             clean = clean.substring(0, clean.length - 4);
         }
-        // Force T separator and Z bounds to protect pure UTC calculations
         if (!clean.includes('T') && clean.includes(' ')) {
             clean = clean.replace(' ', 'T');
         }
@@ -241,7 +219,6 @@ function updateTrueTelemetryDisplay(header, targetHour) {
     if (rawValidTime) {
         displayValid = sanitizeUtcString(rawValidTime);
     } else if (rawRefTime) {
-        // Fallback offset calculation engine if validTime isn't ready
         let clean = String(rawRefTime).replace(" UTC", "").trim().replace(' ', 'T') + 'Z';
         let baseDate = new Date(clean);
         if (!isNaN(baseDate.getTime())) {
@@ -305,7 +282,7 @@ function toggleRealtimeRadar(isVisible) {
 function toggleH9Satellite(isVisible) {
     if (!isVisible) { if (h9SatelliteLayer) { viewer.imageryLayers.remove(h9SatelliteLayer); h9SatelliteLayer = null; } return; }
     const targetDate = new Date(); targetDate.setUTCDate(targetDate.getUTCDate() - 1);
-    const year = targetDate.getUTCFullYear(); const month = String(targetDate.getUTCMonth() + 1).padStart(2, '0'); const day = String(targetDate.getUTCDate()).padStart(2, '0');
+    const year = targetDate.getUTCFullYear(), month = String(targetDate.getUTCMonth() + 1).padStart(2, '0'), day = String(targetDate.getUTCDate()).padStart(2, '0');
     const exactDateStr = `${year}-${month}-${day}`;
     if(satLayerCache[exactDateStr]) {
         if (h9SatelliteLayer && h9SatelliteLayer !== satLayerCache[exactDateStr]) h9SatelliteLayer.alpha = 0.0;
@@ -322,12 +299,10 @@ function enforceLayerOrdering() {
     [velocityTextureLayer, h9SatelliteLayer, liveRadarLayer, combinedOutputLayer].forEach(layer => { if (layer) viewer.imageryLayers.raiseToTop(layer); }); 
 }
 
-// CACHE BUSTER FUNCTION: Forces downloads directly from the source directory
 async function fetchGzJson(url, token, callback) {
     try {
         const cacheBuster = new Date().getTime();
         const verifiedUrl = url.includes('?') ? `${url}&v=${cacheBuster}` : `${url}?v=${cacheBuster}`;
-        
         const res = await fetch(verifiedUrl);
         if (!res.ok) return;
         const buf = await res.arrayBuffer();
@@ -358,9 +333,9 @@ function updateWeatherLayers() {
     
     if(activeWindSpeed || document.getElementById('showParticles').checked || document.getElementById('showCoastlines').checked) {
         fetchGzJson(`${cdnBase}/${model}_${levelQueryStr}_f${targetHour}.json.gz`, localToken, data => {
-            activeDataset = data;
-            // Reads nested wind arrays: data[0].header
-            if (data && data[0] && data[0].header) {
+            if (!data || !data[0]) return;
+            activeDataset = data; // Locks in active wind array
+            if (data[0].header) {
                 updateTrueTelemetryDisplay(data[0].header, parseInt(targetHour, 10));
             }
             renderVelocityCanvasStack(data, activeWindSpeed);
@@ -369,9 +344,10 @@ function updateWeatherLayers() {
     
     if (activeIsobars && model !== 'cwawrf') {
         fetchGzJson(`${cdnBase}/${model}_mslp_f${targetHour}.json.gz`, localToken, data => {
-            // Reads direct root pressure targets: data.header
-            if (data && data.header && !activeWindSpeed) {
-                updateTrueTelemetryDisplay(data.header, parseInt(targetHour, 10));
+            if (!data) return;
+            if (data.header) {
+                // Only update tracking engine if wind speed dataset isn't tracking actively
+                if (!activeWindSpeed) updateTrueTelemetryDisplay(data.header, parseInt(targetHour, 10));
             }
             renderIsobarContours(data);
         });
@@ -429,7 +405,8 @@ function getCellIntersections(x, y, vTL, vTR, vBL, vBR, iso) {
 
 const mouseHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
 mouseHandler.setInputAction(function(movement) {
-    if(!activeDataset) { trackingLabel.style.display = 'none'; return; }
+    // FIXED: Blocks crash if activeDataset structure is an object (MSLP) instead of a Wind array
+    if(!activeDataset || !Array.isArray(activeDataset)) { trackingLabel.style.display = 'none'; return; }
     const cartesian = viewer.camera.pickEllipsoid(movement.endPosition, viewer.scene.globe.ellipsoid);
     if (cartesian) {
         const carto = Cesium.Cartographic.fromCartesian(cartesian);

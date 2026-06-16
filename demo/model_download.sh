@@ -5,9 +5,8 @@ set -euo pipefail # Fail-fast shell architecture
 export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"
 
 # Absolute paths prevent cron context derivation bugs
-BASE_DIR="/Users/eknlau/Desktop/CWA"
-OUTPUT_DIR="$BASE_DIR/data"
-SCRATCH_DIR="$BASE_DIR/.tmp_scratch"
+OUTPUT_DIR="./data"
+SCRATCH_DIR="./.tmp_scratch" # Verified path
 CWA_INPUT_DIR="/Users/eknlau/Desktop/CWA/accu_rain"  
 
 mkdir -p "$OUTPUT_DIR"

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail # Fail-fast shell architecture
 
-# 1. CRITICAL FOR CRONTAB: Define absolute system paths
-export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"
+# Force explicit paths for homebrew, local configurations, and native applications
+export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 # Absolute paths prevent cron context derivation bugs
 OUTPUT_DIR="./data"

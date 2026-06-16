@@ -38,49 +38,20 @@ while true; do
         YESTERDAY=$(date -u -v-1d +"%Y-%m-%d")
     fi
 
-    if [ "$CURRENT_HOUR" -ge 6 ] && [ "$CURRENT_HOUR" -lt 18 ]; then
+    if [ "$CURRENT_HOUR" -ge 12 ] && [ "$CURRENT_HOUR" -lt 24 ]; then
         GFS_CYCLE="00"; GFS_DATE="${CURRENT_DATE} 00:00"
-    elif [ "$CURRENT_HOUR" -ge 18 ] && [ "$CURRENT_HOUR" -lt 24 ]; then
-        GFS_CYCLE="12"; GFS_DATE="${CURRENT_DATE} 12:00"
-    else
-        GFS_CYCLE="18"
-        if [ "$CURRENT_HOUR" -lt 6 ]; then
-            GFS_DATE="${YESTERDAY} 12:00"
-        else
-            GFS_DATE="${CURRENT_DATE} 18:00"
-        fi
-    fi
-
-    if [ "$CURRENT_HOUR" -ge 9 ] && [ "$CURRENT_HOUR" -lt 21 ]; then
         IFS_CYCLE="00"; IFS_DATE="${CURRENT_DATE} 00:00"
-    else
-        IFS_CYCLE="12"
-        if [ "$CURRENT_HOUR" -lt 9 ]; then
-            IFS_DATE="${YESTERDAY} 12:00"
-        else
-            IFS_DATE="${CURRENT_DATE} 12:00"
-        fi
-    fi
-
-    if [ "$CURRENT_HOUR" -ge 7 ] && [ "$CURRENT_HOUR" -lt 19 ]; then
         AIFS_CYCLE="00"; AIFS_DATE="${CURRENT_DATE} 00:00"
-    else
-        AIFS_CYCLE="12"
-        if [ "$CURRENT_HOUR" -lt 7 ]; then
-            AIFS_DATE="${YESTERDAY} 12:00"
-        else
-            AIFS_DATE="${CURRENT_DATE} 12:00"
-        fi
+        CWA_DATE="${CURRENT_DATE} 00:00"
+
+    elif [ "$CURRENT_HOUR" -ge 0 ] && [ "$CURRENT_HOUR" -lt 12 ]; then
+        GFS_CYCLE="12"; GFS_DATE="${YESTERDAY} 12:00"
+        IFS_CYCLE="12"; IFS_DATE="${YESTERDAY} 12:00"
+        AIFS_CYCLE="12"; AIFS_DATE="${YESTERDAY} 12:00"
+        CWA_DATE="${YESTERDAY} 12:00"
     fi
 
     # Mirroring CWA WRF runtime calculation exactly from your web client logic
-    if [ "$CURRENT_HOUR" -ge 19 ]; then
-        CWA_DATE="${CURRENT_DATE} 12:00"
-    elif [ "$CURRENT_HOUR" -ge 7 ]; then
-        CWA_DATE="${CURRENT_DATE} 00:00"
-    else
-        CWA_DATE="${YESTERDAY} 12:00"
-    fi
 
     export GFS_DATE; export IFS_DATE; export AIFS_DATE; export CWA_DATE
     export SCRATCH_DIR; export CWA_INPUT_DIR

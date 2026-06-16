@@ -73,7 +73,7 @@ for fhr in "${FORECAST_HOURS[@]}"; do
     export CLEAN_HOUR; export fhr
 
     # Point directly to your active python environment binary if python3.11 errors out
-    python3.11 - <<'EOF'
+    /opt/homebrew/bin/python3.11 - <<'EOF'
 import os, sys, json, gzip
 import numpy as np
 import xarray as xr

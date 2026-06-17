@@ -220,9 +220,9 @@ function calculateRegularTimeDisplay() {
         }
     } else if (model === 'cwawrf') {
         if (currentHour >= 12 && currentHour < 24) {
-            cycleHour = 6;
+            cycleHour = 0;
         } else {
-            cycleHour = 18;
+            cycleHour = 12;
             cycleDate.setUTCDate(cycleDate.getUTCDate() - 1); // Yesterday
         }
     }

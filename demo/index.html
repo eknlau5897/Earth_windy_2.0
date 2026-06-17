@@ -266,7 +266,7 @@ function fetchWebGLWindCoastlines() {
 
 function drawWebGLWindCoastlines(ctxT, width, height, header) {
     if (!document.getElementById('showCoastlines').checked || !webglWindCoastlineGeoJSON) return;
-    ctxT.save(); ctxT.lineWidth = 1.2; ctxT.strokeStyle = 'rgba(255,255,255,0.3)';
+    ctxT.save(); ctxT.lineWidth = 1.2; ctxT.strokeStyle = 'rgba(255,0,0,0.9)';
     const { lo1, la1, lo2, la2 } = header; const lonRange = lo2 - lo1, latRange = la1 - la2;
     webglWindCoastlineGeoJSON.features.forEach(f => {
         const line = f.geometry.coordinates; let firstPoint = true, lastX = null; ctxT.beginPath();

@@ -118,7 +118,7 @@ const ncarPalette = ncarCtx.getImageData(0, 0, 256, 1).data;
 function getNCARColor(speedMS) {
     const knots = speedMS / 0.514444;
     if (knots <= 0.5) return null;
-    let idx = Math.min(Math.floor((knots / 120) * 255), 255);
+    let idx = Math.min(Math.floor((knots / 100) * 255), 255);
     return [ncarPalette[idx*4], ncarPalette[idx*4+1], ncarPalette[idx*4+2], ncarPalette[idx*4+3]]; 
 }
 

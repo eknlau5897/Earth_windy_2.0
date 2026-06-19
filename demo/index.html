@@ -63,8 +63,7 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16p
 <label><input type="checkbox" id="showCoastlines" checked onchange="updateWeatherLayers()"> WebGL-Wind Coastlines (red)</label>
 <label><input type="checkbox" id="showWindSpeed" checked onchange="updateWeatherLayers()"> Wind Speed Heatmap</label>
 <label><input type="checkbox" id="showParticles" checked> High-Density Wind Particles (White Streamers)</label>
-<label><input type="checkbox" id="showIsobars" checked onchange="updateWeatherLayers()"> Pressure Isobars(white)</label>
-<label><input type="checkbox" id="showPressureCenters" checked onchange="updateWeatherLayers()"> 🏷️ High/Low Pressure Centers</label>
+<label><input type="checkbox" id="showIsobars" checked onchange="updateWeatherLayers()"> Pressure Isobars</label>
 <hr style="width:100%; border:0; border-top:1px solid rgba(255,255,255,0.1); margin: 5px 0;">
 <label><input type="checkbox" id="realtimeRadar" onchange="toggleRealtimeRadar(this.checked)"> 📡 Live Weather Radar (RainViewer)</label>
 <label><input type="checkbox" id="h9Satellite" onchange="toggleH9Satellite(this.checked)"> 🛰️ NASA Worldview (True Color Composite)</label>
@@ -95,7 +94,6 @@ document.getElementById('timeSlider').max = forecastHours.length - 1;
 let currentBaseLayer = null, h9SatelliteLayer = null, liveRadarLayer = null;
 let velocityTextureLayer = null, combinedOutputLayer = null;
 let activeDataset = null, webglWindCoastlineGeoJSON = null;
-let pressureEntities = [];
 let currentUpdateToken = 0;
 const cdnBase = `../data`;
 let satLayerCache = {};
@@ -182,17 +180,20 @@ function updateAndDrawParticles() {
 viewer.scene.preRender.addEventListener(function() { updateAndDrawParticles(); }); 
 initParticles();
 
+// MATCHED TIMING DAEMON: Replicates your explicit Bash shell logic step-for-step
 function calculateRegularTimeDisplay() {
     const model = document.getElementById('modelSelect').value;
     let sliderIdx = document.getElementById('timeSlider').value;
     let targetHour = parseInt(forecastHours[sliderIdx], 10);
     
+    // 1. Get the absolute current UTC time components directly
     const now = new Date();
     const currentYear = now.getUTCFullYear();
     const currentMonth = now.getUTCMonth();
     const currentDate = now.getUTCDate();
     const currentHour = now.getUTCHours();
     
+    // 2. Initialize a locked UTC date point (No local timezone leaks)
     let cycleDate = new Date(Date.UTC(currentYear, currentMonth, currentDate, 0, 0, 0));
     let cycleHour = 0;
     
@@ -203,18 +204,36 @@ function calculateRegularTimeDisplay() {
             cycleHour = 12;
             cycleDate.setUTCDate(cycleDate.getUTCDate() - 1); 
         } 
-    } else if (model === 'ecmwf' || model === 'aifs' || model === 'cwawrf') {
+    } else if (model === 'ecmwf') {
         if (currentHour >= 12 && currentHour < 24) {
             cycleHour = 0;
         } else {
             cycleHour = 12;
             cycleDate.setUTCDate(cycleDate.getUTCDate() - 1);
         }
+    } else if (model === 'aifs') {
+        if (currentHour >= 12 && currentHour < 24) {
+            cycleHour = 0;
+        } else {
+            cycleHour = 12;
+            cycleDate.setUTCDate(cycleDate.getUTCDate() - 1);
+        }
+    } else if (model === 'cwawrf') {
+        if (currentHour >= 12 && currentHour < 24) {
+            cycleHour = 0;
+        } else {
+            cycleHour = 12;
+            cycleDate.setUTCDate(cycleDate.getUTCDate() - 1); // Yesterday
+        }
     }
     
+    // Explicitly set the calculated model run hour in UTC
     cycleDate.setUTCHours(cycleHour, 0, 0, 0);
+    
+    // 3. Increment forecast validation window strictly via UTC milliseconds
     let validDate = new Date(cycleDate.getTime() + (targetHour * 60 * 60 * 1000));
     
+    // Clean, standard formatting helper string
     function formatStr(d) {
         let yyyy = d.getUTCFullYear();
         let mm = String(d.getUTCMonth() + 1).padStart(2, '0');
@@ -308,9 +327,7 @@ function updateWeatherLayers() {
     [velocityTextureLayer, combinedOutputLayer].forEach(l => { if(l) viewer.imageryLayers.remove(l); });
     velocityTextureLayer = combinedOutputLayer = activeDataset = null;
     
-    pressureEntities.forEach(entity => viewer.entities.remove(entity));
-    pressureEntities = [];
-
+    // Refresh calculations based on current model criteria matching bash script limits
     calculateRegularTimeDisplay();
 
     const model = document.getElementById('modelSelect').value;
@@ -342,7 +359,6 @@ function updateWeatherLayers() {
         fetchGzJson(`${cdnBase}/${model}_mslp_f${targetHour}.json.gz`, localToken, data => {
             if (!data) return;
             renderIsobarContours(data);
-            calculatePressureCenters(data);
         });
     }
 }
@@ -394,104 +410,6 @@ function getCellIntersections(x, y, vTL, vTR, vBL, vBR, iso) {
     if ((vTL >= iso) !== (vBL >= iso)) pts.push({ x, y: y + (iso - vTL) / (vBL - vTL) });
     if ((vTR >= iso) !== (vBR >= iso)) pts.push({ x: x + 1, y: y + (iso - vTR) / (vBR - vTR) });
     return pts;
-}
-
-function calculatePressureCenters(jsonData) {
-    // 1. Clear old entities
-    pressureEntities.forEach(entity => viewer.entities.remove(entity));
-    pressureEntities = [];
-    if (!document.getElementById('showPressureCenters').checked) return;
-
-    const { data, header } = jsonData;
-    const { nx, ny, lo1, la1, dx, dy } = header;
-    
-    // SIGNIFICANTLY INCREASED RADIUS: Skips local noise, requires a wider domain dominance
-    const searchRadius = 25; 
-    
-    // Temporary array to hold candidate points before drawing
-    let candidates = [];
-
-    // 2. Scan the grid for raw local extrema
-    for (let y = searchRadius; y < ny - searchRadius; y += 2) { // Step by 2 to optimize performance
-        for (let x = searchRadius; x < nx - searchRadius; x += 2) {
-            const index = y * nx + x;
-            const centerVal = data[index];
-            let isMax = true;
-            let isMin = true;
-
-            // Check neighbors in the expanded window
-            for (let ny_offset = -searchRadius; ny_offset <= searchRadius; ny_offset += 2) {
-                for (let nx_offset = -searchRadius; nx_offset <= searchRadius; nx_offset += 2) {
-                    if (nx_offset === 0 && ny_offset === 0) continue;
-                    
-                    const neighborVal = data[(y + ny_offset) * nx + (x + nx_offset)];
-                    if (neighborVal >= centerVal) isMax = false;
-                    if (neighborVal <= centerVal) isMin = false;
-                }
-                if (!isMax && !isMin) break;
-            }
-
-            if (isMax || isMin) {
-                let lon = lo1 + (x * dx);
-                let lat = la1 - (y * dy);
-                if (lon > 180) lon -= 360; 
-                const hPa = Math.round(centerVal / 100); 
-
-                // Enforce meaningful meteorological thresholds to filter weak systems
-                if (isMax && hPa > 1016) { 
-                    candidates.push({ lon, lat, type: 'H', value: hPa, color: '#f43f5e' });
-                } else if (isMin && hPa < 1008) { 
-                    candidates.push({ lon, lat, type: 'L', value: hPa, color: '#38bdf8' });
-                }
-            }
-        }
-    }
-
-    // 3. SPATIAL CLUSTERING FILTER: Prevent labels from being too close together geographically
-    const minDistanceDegrees = 12.0; // Enforces roughly 1300km separation between labels
-    let filteredCandidates = [];
-
-    // Sort candidates so the strongest systems (highest Highs, lowest Lows) get processed first
-    candidates.sort((a, b) => {
-        if (a.type === 'H') return b.value - a.value; // Extreme high first
-        return a.value - b.value; // Extreme low first
-    });
-
-    candidates.forEach(cand => {
-        // Check if this candidate is too close to an already accepted center
-        let tooClose = filteredCandidates.some(accepted => {
-            let dLon = cand.lon - accepted.lon;
-            let dLat = cand.lat - accepted.lat;
-            // Handle anti-meridian wrap-around for longitude distance
-            if (dLon > 180) dLon -= 360;
-            if (dLon < -180) dLon += 360;
-            return Math.sqrt(dLon * dLon + dLat * dLat) < minDistanceDegrees;
-        });
-
-        if (!tooClose) {
-            filteredCandidates.push(cand);
-            createPressureLabel(cand.lon, cand.lat, cand.type, cand.color, cand.value);
-        }
-    });
-}
-
-function createPressureLabel(lon, lat, type, colorHex, value) {
-    const entity = viewer.entities.add({
-        position: Cesium.Cartesian3.fromDegrees(lon, lat),
-        label: {
-            text: `${type}\n${value}`,
-            font: 'bold 15px monospace',
-            fillColor: Cesium.Color.fromCssColorString(colorHex),
-            outlineColor: Cesium.Color.BLACK,
-            outlineWidth: 4,
-            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-            verticalOrigin: Cesium.VerticalOrigin.CENTER,
-            horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
-            disableDepthTestDistance: Number.POSITIVE_INFINITY,
-            distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0.0, 30000000.0)
-        }
-    });
-    pressureEntities.push(entity);
 }
 
 const mouseHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);

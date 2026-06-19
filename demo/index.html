@@ -397,24 +397,33 @@ function getCellIntersections(x, y, vTL, vTR, vBL, vBR, iso) {
 }
 
 function calculatePressureCenters(jsonData) {
+    // 1. Clear old entities
     pressureEntities.forEach(entity => viewer.entities.remove(entity));
     pressureEntities = [];
     if (!document.getElementById('showPressureCenters').checked) return;
 
     const { data, header } = jsonData;
     const { nx, ny, lo1, la1, dx, dy } = header;
-    const searchRadius = 8; 
     
-    for (let y = searchRadius; y < ny - searchRadius; y++) {
-        for (let x = searchRadius; x < nx - searchRadius; x++) {
+    // SIGNIFICANTLY INCREASED RADIUS: Skips local noise, requires a wider domain dominance
+    const searchRadius = 25; 
+    
+    // Temporary array to hold candidate points before drawing
+    let candidates = [];
+
+    // 2. Scan the grid for raw local extrema
+    for (let y = searchRadius; y < ny - searchRadius; y += 2) { // Step by 2 to optimize performance
+        for (let x = searchRadius; x < nx - searchRadius; x += 2) {
             const index = y * nx + x;
             const centerVal = data[index];
             let isMax = true;
             let isMin = true;
 
-            for (let ny_offset = -searchRadius; ny_offset <= searchRadius; ny_offset++) {
-                for (let nx_offset = -searchRadius; nx_offset <= searchRadius; nx_offset++) {
+            // Check neighbors in the expanded window
+            for (let ny_offset = -searchRadius; ny_offset <= searchRadius; ny_offset += 2) {
+                for (let nx_offset = -searchRadius; nx_offset <= searchRadius; nx_offset += 2) {
                     if (nx_offset === 0 && ny_offset === 0) continue;
+                    
                     const neighborVal = data[(y + ny_offset) * nx + (x + nx_offset)];
                     if (neighborVal >= centerVal) isMax = false;
                     if (neighborVal <= centerVal) isMin = false;
@@ -428,14 +437,42 @@ function calculatePressureCenters(jsonData) {
                 if (lon > 180) lon -= 360; 
                 const hPa = Math.round(centerVal / 100); 
 
-                if (isMax && hPa > 1013) {
-                    createPressureLabel(lon, lat, 'H', '#f43f5e', hPa);
-                } else if (isMin && hPa < 1013) {
-                    createPressureLabel(lon, lat, 'L', '#38bdf8', hPa);
+                // Enforce meaningful meteorological thresholds to filter weak systems
+                if (isMax && hPa > 1016) { 
+                    candidates.push({ lon, lat, type: 'H', value: hPa, color: '#f43f5e' });
+                } else if (isMin && hPa < 1008) { 
+                    candidates.push({ lon, lat, type: 'L', value: hPa, color: '#38bdf8' });
                 }
             }
         }
     }
+
+    // 3. SPATIAL CLUSTERING FILTER: Prevent labels from being too close together geographically
+    const minDistanceDegrees = 12.0; // Enforces roughly 1300km separation between labels
+    let filteredCandidates = [];
+
+    // Sort candidates so the strongest systems (highest Highs, lowest Lows) get processed first
+    candidates.sort((a, b) => {
+        if (a.type === 'H') return b.value - a.value; // Extreme high first
+        return a.value - b.value; // Extreme low first
+    });
+
+    candidates.forEach(cand => {
+        // Check if this candidate is too close to an already accepted center
+        let tooClose = filteredCandidates.some(accepted => {
+            let dLon = cand.lon - accepted.lon;
+            let dLat = cand.lat - accepted.lat;
+            // Handle anti-meridian wrap-around for longitude distance
+            if (dLon > 180) dLon -= 360;
+            if (dLon < -180) dLon += 360;
+            return Math.sqrt(dLon * dLon + dLat * dLat) < minDistanceDegrees;
+        });
+
+        if (!tooClose) {
+            filteredCandidates.push(cand);
+            createPressureLabel(cand.lon, cand.lat, cand.type, cand.color, cand.value);
+        }
+    });
 }
 
 function createPressureLabel(lon, lat, type, colorHex, value) {

@@ -64,6 +64,7 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16p
 <label><input type="checkbox" id="showWindSpeed" checked onchange="updateWeatherLayers()"> Wind Speed Heatmap</label>
 <label><input type="checkbox" id="showParticles" checked> High-Density Wind Particles (White Streamers)</label>
 <label><input type="checkbox" id="showIsobars" checked onchange="updateWeatherLayers()"> Pressure Isobars(white)</label>
+<label><input type="checkbox" id="showPressureCenters" checked onchange="updateWeatherLayers()"> 🏷️ High/Low Pressure Centers</label>
 <hr style="width:100%; border:0; border-top:1px solid rgba(255,255,255,0.1); margin: 5px 0;">
 <label><input type="checkbox" id="realtimeRadar" onchange="toggleRealtimeRadar(this.checked)"> 📡 Live Weather Radar (RainViewer)</label>
 <label><input type="checkbox" id="h9Satellite" onchange="toggleH9Satellite(this.checked)"> 🛰️ NASA Worldview (True Color Composite)</label>
@@ -94,6 +95,7 @@ document.getElementById('timeSlider').max = forecastHours.length - 1;
 let currentBaseLayer = null, h9SatelliteLayer = null, liveRadarLayer = null;
 let velocityTextureLayer = null, combinedOutputLayer = null;
 let activeDataset = null, webglWindCoastlineGeoJSON = null;
+let pressureEntities = [];
 let currentUpdateToken = 0;
 const cdnBase = `../data`;
 let satLayerCache = {};
@@ -180,20 +182,17 @@ function updateAndDrawParticles() {
 viewer.scene.preRender.addEventListener(function() { updateAndDrawParticles(); }); 
 initParticles();
 
-// MATCHED TIMING DAEMON: Replicates your explicit Bash shell logic step-for-step
 function calculateRegularTimeDisplay() {
     const model = document.getElementById('modelSelect').value;
     let sliderIdx = document.getElementById('timeSlider').value;
     let targetHour = parseInt(forecastHours[sliderIdx], 10);
     
-    // 1. Get the absolute current UTC time components directly
     const now = new Date();
     const currentYear = now.getUTCFullYear();
     const currentMonth = now.getUTCMonth();
     const currentDate = now.getUTCDate();
     const currentHour = now.getUTCHours();
     
-    // 2. Initialize a locked UTC date point (No local timezone leaks)
     let cycleDate = new Date(Date.UTC(currentYear, currentMonth, currentDate, 0, 0, 0));
     let cycleHour = 0;
     
@@ -204,36 +203,18 @@ function calculateRegularTimeDisplay() {
             cycleHour = 12;
             cycleDate.setUTCDate(cycleDate.getUTCDate() - 1); 
         } 
-    } else if (model === 'ecmwf') {
+    } else if (model === 'ecmwf' || model === 'aifs' || model === 'cwawrf') {
         if (currentHour >= 12 && currentHour < 24) {
             cycleHour = 0;
         } else {
             cycleHour = 12;
             cycleDate.setUTCDate(cycleDate.getUTCDate() - 1);
-        }
-    } else if (model === 'aifs') {
-        if (currentHour >= 12 && currentHour < 24) {
-            cycleHour = 0;
-        } else {
-            cycleHour = 12;
-            cycleDate.setUTCDate(cycleDate.getUTCDate() - 1);
-        }
-    } else if (model === 'cwawrf') {
-        if (currentHour >= 12 && currentHour < 24) {
-            cycleHour = 0;
-        } else {
-            cycleHour = 12;
-            cycleDate.setUTCDate(cycleDate.getUTCDate() - 1); // Yesterday
         }
     }
     
-    // Explicitly set the calculated model run hour in UTC
     cycleDate.setUTCHours(cycleHour, 0, 0, 0);
-    
-    // 3. Increment forecast validation window strictly via UTC milliseconds
     let validDate = new Date(cycleDate.getTime() + (targetHour * 60 * 60 * 1000));
     
-    // Clean, standard formatting helper string
     function formatStr(d) {
         let yyyy = d.getUTCFullYear();
         let mm = String(d.getUTCMonth() + 1).padStart(2, '0');
@@ -327,7 +308,9 @@ function updateWeatherLayers() {
     [velocityTextureLayer, combinedOutputLayer].forEach(l => { if(l) viewer.imageryLayers.remove(l); });
     velocityTextureLayer = combinedOutputLayer = activeDataset = null;
     
-    // Refresh calculations based on current model criteria matching bash script limits
+    pressureEntities.forEach(entity => viewer.entities.remove(entity));
+    pressureEntities = [];
+
     calculateRegularTimeDisplay();
 
     const model = document.getElementById('modelSelect').value;
@@ -359,6 +342,7 @@ function updateWeatherLayers() {
         fetchGzJson(`${cdnBase}/${model}_mslp_f${targetHour}.json.gz`, localToken, data => {
             if (!data) return;
             renderIsobarContours(data);
+            calculatePressureCenters(data);
         });
     }
 }
@@ -410,6 +394,67 @@ function getCellIntersections(x, y, vTL, vTR, vBL, vBR, iso) {
     if ((vTL >= iso) !== (vBL >= iso)) pts.push({ x, y: y + (iso - vTL) / (vBL - vTL) });
     if ((vTR >= iso) !== (vBR >= iso)) pts.push({ x: x + 1, y: y + (iso - vTR) / (vBR - vTR) });
     return pts;
+}
+
+function calculatePressureCenters(jsonData) {
+    pressureEntities.forEach(entity => viewer.entities.remove(entity));
+    pressureEntities = [];
+    if (!document.getElementById('showPressureCenters').checked) return;
+
+    const { data, header } = jsonData;
+    const { nx, ny, lo1, la1, dx, dy } = header;
+    const searchRadius = 8; 
+    
+    for (let y = searchRadius; y < ny - searchRadius; y++) {
+        for (let x = searchRadius; x < nx - searchRadius; x++) {
+            const index = y * nx + x;
+            const centerVal = data[index];
+            let isMax = true;
+            let isMin = true;
+
+            for (let ny_offset = -searchRadius; ny_offset <= searchRadius; ny_offset++) {
+                for (let nx_offset = -searchRadius; nx_offset <= searchRadius; nx_offset++) {
+                    if (nx_offset === 0 && ny_offset === 0) continue;
+                    const neighborVal = data[(y + ny_offset) * nx + (x + nx_offset)];
+                    if (neighborVal >= centerVal) isMax = false;
+                    if (neighborVal <= centerVal) isMin = false;
+                }
+                if (!isMax && !isMin) break;
+            }
+
+            if (isMax || isMin) {
+                let lon = lo1 + (x * dx);
+                let lat = la1 - (y * dy);
+                if (lon > 180) lon -= 360; 
+                const hPa = Math.round(centerVal / 100); 
+
+                if (isMax && hPa > 1013) {
+                    createPressureLabel(lon, lat, 'H', '#f43f5e', hPa);
+                } else if (isMin && hPa < 1013) {
+                    createPressureLabel(lon, lat, 'L', '#38bdf8', hPa);
+                }
+            }
+        }
+    }
+}
+
+function createPressureLabel(lon, lat, type, colorHex, value) {
+    const entity = viewer.entities.add({
+        position: Cesium.Cartesian3.fromDegrees(lon, lat),
+        label: {
+            text: `${type}\n${value}`,
+            font: 'bold 15px monospace',
+            fillColor: Cesium.Color.fromCssColorString(colorHex),
+            outlineColor: Cesium.Color.BLACK,
+            outlineWidth: 4,
+            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+            verticalOrigin: Cesium.VerticalOrigin.CENTER,
+            horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0.0, 30000000.0)
+        }
+    });
+    pressureEntities.push(entity);
 }
 
 const mouseHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);

@@ -133,18 +133,22 @@ def build_json(param, level, ds, u_var, v_var=None, is_pressure_level=False, bas
 
         run_time, valid_time = get_time_strings(base_date_str, clean_hour_env)
 
+        # Single Scalar Export Handling (MSLP, 2m Temperature)
         if v_var is None:
+            # Default NaN filling strategy: 101325 for MSLP, 273.15 K (0°C) for Temp
+            fill_val = 273.15 if param == "Temperature" else 101325
             return {
                 "header": {
-                    "parameterName": "Mean Sea Level Pressure", 
-                    "surface1Value": 0, "nx": nx, "ny": ny, 
+                    "parameterName": param, 
+                    "surface1Value": level, "nx": nx, "ny": ny, 
                     "lo1": float(lons.min()), "la1": float(lats.max()), 
                     "lo2": float(lons.max()), "la2": float(lats.min()), 
-                    "dx": 0.25, "dy": 0.25,
+                    "dx": float(abs(lons[1]-lons[0])) if len(lons)>1 else 0.25, 
+                    "dy": float(abs(lats[1]-lats[0])) if len(lats)>1 else 0.25,
                     "refTime": run_time,
                     "validTime": valid_time
                 }, 
-                "data": np.where(np.isnan(u_vals), 101325, u_vals).flatten().tolist()
+                "data": np.where(np.isnan(u_vals), fill_val, u_vals).flatten().tolist()
             }
 
         return [
@@ -166,13 +170,24 @@ def safe_xarray_fetch(herbie_obj, search_string):
         try: herbie_obj.download(); return herbie_obj.xarray(search_string)
         except: return None
 
+# --- GFS Processing ---
 try:
     Hg = Herbie(gfs_date_env, model="gfs", product="pgrb2.0p25", fxx=clean_hour_env, verbose=False)
+    # Wind 10m
     save_gzip(build_json("Wind", 10, safe_xarray_fetch(Hg, ":(U|V)GRD:10 m above ground:"), "u10", "v10", base_date_str=gfs_date_env), f"gfs_10m_f{fhr_env}.json.gz")
+    
+    # 2m Temperature
+    gfs_t2m = safe_xarray_fetch(Hg, ":TMP:2 m above ground:")
+    if gfs_t2m is not None:
+        t_var = "t2m" if "t2m" in gfs_t2m.data_vars else list(gfs_t2m.data_vars)[0]
+        save_gzip(build_json("Temperature", 2, gfs_t2m, t_var, None, base_date_str=gfs_date_env), f"gfs_2t_f{fhr_env}.json.gz")
+        
+    # MSLP
     gfs_mslp = safe_xarray_fetch(Hg, ":PRMSL:mean sea level:")
     if gfs_mslp is not None:
         mslp_var = "prmsl" if "prmsl" in gfs_mslp.data_vars else list(gfs_mslp.data_vars)[0]
         save_gzip(build_json("MSLP", 0, gfs_mslp, mslp_var, None, base_date_str=gfs_date_env), f"gfs_mslp_f{fhr_env}.json.gz")
+        
     for p in [850, 700, 500, 200]:
         gfs_plev_ds = safe_xarray_fetch(Hg, f":(U|V)GRD:{p} mb:")
         if gfs_plev_ds is not None:
@@ -181,9 +196,17 @@ try:
             save_gzip(build_json("Wind", p, gfs_plev_ds, gfs_u, gfs_v, is_pressure_level=True, base_date_str=gfs_date_env), f"gfs_{p}_f{fhr_env}.json.gz")
 except Exception as e: print(f"GFS Skip: {e}")
 
+# --- ECMWF IFS Processing ---
 try:
     He = Herbie(ifs_date_env, model="ifs", product="oper", source="ecmwf", fxx=clean_hour_env, verbose=False)
     save_gzip(build_json("Wind", 10, safe_xarray_fetch(He, ":10(u|v):"), "u10", "v10", base_date_str=ifs_date_env), f"ecmwf_10m_f{fhr_env}.json.gz")
+    
+    # 2m Temperature
+    ifs_t2m = safe_xarray_fetch(He, ":2t:")
+    if ifs_t2m is not None:
+        t_var = "2t" if "2t" in ifs_t2m.data_vars else list(ifs_t2m.data_vars)[0]
+        save_gzip(build_json("Temperature", 2, ifs_t2m, t_var, None, base_date_str=ifs_date_env), f"ecmwf_2t_f{fhr_env}.json.gz")
+
     ifs_mslp = safe_xarray_fetch(He, ":msl:")
     if ifs_mslp is not None:
         mslp_var = "msl" if "msl" in ifs_mslp.data_vars else list(ifs_mslp.data_vars)[0]
@@ -192,9 +215,17 @@ try:
         save_gzip(build_json("Wind", p, safe_xarray_fetch(He, f":(u|v):{p}:"), "u", "v", True, base_date_str=ifs_date_env), f"ecmwf_{p}_f{fhr_env}.json.gz")
 except Exception as e: print(f"IFS Skip: {e}")
 
+# --- ECMWF AIFS Processing ---
 try:
     Ha = Herbie(aifs_date_env, model="aifs", product="oper", source="ecmwf", fxx=clean_hour_env, verbose=False)
     save_gzip(build_json("Wind", 10, safe_xarray_fetch(Ha, ":10(u|v):"), "u10", "v10", base_date_str=aifs_date_env), f"aifs_10m_f{fhr_env}.json.gz")
+    
+    # 2m Temperature
+    aifs_t2m = safe_xarray_fetch(Ha, ":2t:")
+    if aifs_t2m is not None:
+        t_var = "2t" if "2t" in aifs_t2m.data_vars else list(aifs_t2m.data_vars)[0]
+        save_gzip(build_json("Temperature", 2, aifs_t2m, t_var, None, base_date_str=aifs_date_env), f"aifs_2t_f{fhr_env}.json.gz")
+
     aifs_mslp = safe_xarray_fetch(Ha, ":msl:")
     if aifs_mslp is not None:
         mslp_var = "msl" if "msl" in aifs_mslp.data_vars else list(aifs_mslp.data_vars)[0]
@@ -203,6 +234,7 @@ try:
         save_gzip(build_json("Wind", p, safe_xarray_fetch(Ha, f":(u|v):{p}:"), "u", "v", True, base_date_str=aifs_date_env), f"aifs_{p}_f{fhr_env}.json.gz")
 except Exception as e: print(f"AIFS Skip: {e}")
 
+# --- CWA WRF Processing ---
 if fhr_env == "000":
     print(f"ℹ️ Skipping step f000 for CWA WRF.")
 elif clean_hour_env <= 84:
@@ -213,8 +245,18 @@ elif clean_hour_env <= 84:
             import cfgrib
             datasets = cfgrib.open_datasets(grib_target_path)
             ds_surface = datasets[0]
+            ds_surface_2 = datasets[1]
+            
+            # Wind 10m
             cwa_10m_json = build_json("Wind", 10, ds_surface, "u10", "v10", base_date_str=cwa_date_env)
             save_gzip(cwa_10m_json, f"cwawrf_10m_f{fhr_env}.json.gz")
+            
+            # 2m Temperature
+            t_var_cwa = "t2m" if "t2m" in ds_surface_2.data_vars else ("2t" if "2t" in ds_surface_2.data_vars else None)
+            if t_var_cwa:
+                cwa_2t_json = build_json("Temperature", 2, ds_surface_2, t_var_cwa, None, base_date_str=cwa_date_env)
+                save_gzip(cwa_2t_json, f"cwawrf_2t_f{fhr_env}.json.gz")
+
             ds_pressure = datasets[2]
             level_mappings = {850: 2, 700: 3, 500: 4, 200: 8}
             for p_level, idx in level_mappings.items():

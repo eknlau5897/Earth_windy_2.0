@@ -18,7 +18,6 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16p
 .toggle-container { border-top: 1px solid rgba(255, 255, 255, 0.1); padding-top: 14px; margin-top: 12px; display: flex; flex-direction: column; gap: 10px; font-size: 12px; }
 .toggle-container label { cursor: pointer; display: flex; align-items: center; gap: 10px; font-weight: 500; }
 .toggle-container input[type="checkbox"] { width: 16px; height: 16px; accent-color: #0a84ff; cursor: pointer; }
-#legend{ position: absolute; bottom: 30px; right: 30px; background: rgba(10, 10, 14, 0.85); padding: 12px 16px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.08); font-family: monospace; font-size: 11px; color: #fff; z-index: 1000; pointer-events: none; display: none; }
 .valid-time-display { font-size: 11px; font-family: monospace; color: #38bdf8; margin-top: 6px; display: flex; flex-direction: column; gap: 2px; line-height: 1.4; }
 #particleCanvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 999; }
 </style>
@@ -39,6 +38,7 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16p
 <label>Atmospheric Level Boundary</label>
 <select id="levelSelect" onchange="updateWeatherLayers()">
 <option value="10m">10-Meter Surface Boundary Layer</option>
+<option value="2t">2-Meter Surface Temperature</option>
 <option value="850">850 hPa (~1,500 m)</option>
 <option value="700">700 hPa (~2,500 m)</option>
 <option value="500">500 hPa (~5,500 m)</option>
@@ -61,15 +61,14 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16p
 </div>
 <div class="toggle-container">
 <label><input type="checkbox" id="showCoastlines" checked onchange="updateWeatherLayers()"> WebGL-Wind Coastlines (red)</label>
-<label><input type="checkbox" id="showWindSpeed" checked onchange="updateWeatherLayers()"> Wind Speed Heatmap</label>
+<label><input type="checkbox" id="showWindSpeed" checked onchange="updateWeatherLayers()"> Wind Speed / Temperature Heatmap</label>
 <label><input type="checkbox" id="showParticles" checked> High-Density Wind Particles (White Streamers)</label>
-<label><input type="checkbox" id="showIsobars" checked onchange="updateWeatherLayers()"> Pressure Isobars</label>
+<label><input type="checkbox" id="showIsobars" checked onchange="updateWeatherLayers()"> Pressure Isobars(white)</label>
 <hr style="width:100%; border:0; border-top:1px solid rgba(255,255,255,0.1); margin: 5px 0;">
 <label><input type="checkbox" id="realtimeRadar" onchange="toggleRealtimeRadar(this.checked)"> 📡 Live Weather Radar (RainViewer)</label>
 <label><input type="checkbox" id="h9Satellite" onchange="toggleH9Satellite(this.checked)"> 🛰️ NASA Worldview (True Color Composite)</label>
 </div>
 </div>
-<div id="legend"></div>
 <div id="cesiumContainer"></div>
 <canvas id="particleCanvas"></canvas>
 <script>
@@ -92,8 +91,8 @@ for (let h = 132; h <= 240; h += 12) forecastHours.push(String(h).padStart(3, '0
 document.getElementById('timeSlider').max = forecastHours.length - 1;
 
 let currentBaseLayer = null, h9SatelliteLayer = null, liveRadarLayer = null;
-let velocityTextureLayer = null, combinedOutputLayer = null;
-let activeDataset = null, webglWindCoastlineGeoJSON = null;
+let velocityTextureLayer = null, combinedOutputLayer = null, tempTextureLayer = null;
+let activeDataset = null, activeTempDataset = null, webglWindCoastlineGeoJSON = null;
 let currentUpdateToken = 0;
 const cdnBase = `../data`;
 let satLayerCache = {};
@@ -102,6 +101,7 @@ const trackingLabel = document.createElement('div');
 trackingLabel.style.cssText = `position: absolute; background: rgba(10, 10, 14, 0.92); padding: 10px 14px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.15); color: #fff; font-family: monospace; font-size: 12px; pointer-events: none; display: none; z-index: 5000; box-shadow: 0 6px 20px rgba(0,0,0,0.6);`;
 document.body.appendChild(trackingLabel);
 
+// Wind Speed Color Palette Generator
 const ncarCanvas = document.createElement('canvas'); ncarCanvas.width = 256; ncarCanvas.height = 1;
 const ncarCtx = ncarCanvas.getContext('2d');
 const ncarGrad = ncarCtx.createLinearGradient(0, 0, 256, 0); 
@@ -120,6 +120,23 @@ function getNCARColor(speedMS) {
     if (knots <= 0.5) return null;
     let idx = Math.min(Math.floor((knots / 100) * 255), 255);
     return [ncarPalette[idx*4], ncarPalette[idx*4+1], ncarPalette[idx*4+2], ncarPalette[idx*4+3]]; 
+}
+
+// 2m Temperature Color Palette Map (-40°C to +45°C)
+function getTempColor(tempKelvin) {
+    const tempC = tempKelvin - 273.15;
+    let minC = -40, maxC = 45;
+    let norm = Math.max(0, Math.min(1, (tempC - minC) / (maxC - minC)));
+    
+    // Smooth blue -> cyan -> green -> yellow -> red -> magenta color ramp
+    let r = 0, g = 0, b = 0;
+    if (norm < 0.2) { r = 100; g = 0; b = 200 + norm*5*55; }
+    else if (norm < 0.4) { r = 0; g = (norm-0.2)*5*255; b = 255; }
+    else if (norm < 0.6) { r = 0; g = 255; b = 255 - (norm-0.4)*5*255; }
+    else if (norm < 0.8) { r = (norm-0.6)*5*255; g = 255 - (norm-0.6)*2.5*255; b = 0; }
+    else { r = 255; g = 128 - (norm-0.8)*5*128; b = (norm-0.8)*5*200; }
+    
+    return [Math.floor(r), Math.floor(g), Math.floor(b), 180]; // Alpha = 180 for semi-transparency
 }
 
 let particles = [];
@@ -180,20 +197,17 @@ function updateAndDrawParticles() {
 viewer.scene.preRender.addEventListener(function() { updateAndDrawParticles(); }); 
 initParticles();
 
-// MATCHED TIMING DAEMON: Replicates your explicit Bash shell logic step-for-step
 function calculateRegularTimeDisplay() {
     const model = document.getElementById('modelSelect').value;
     let sliderIdx = document.getElementById('timeSlider').value;
     let targetHour = parseInt(forecastHours[sliderIdx], 10);
     
-    // 1. Get the absolute current UTC time components directly
     const now = new Date();
     const currentYear = now.getUTCFullYear();
     const currentMonth = now.getUTCMonth();
     const currentDate = now.getUTCDate();
     const currentHour = now.getUTCHours();
     
-    // 2. Initialize a locked UTC date point (No local timezone leaks)
     let cycleDate = new Date(Date.UTC(currentYear, currentMonth, currentDate, 0, 0, 0));
     let cycleHour = 0;
     
@@ -204,40 +218,22 @@ function calculateRegularTimeDisplay() {
             cycleHour = 12;
             cycleDate.setUTCDate(cycleDate.getUTCDate() - 1); 
         } 
-    } else if (model === 'ecmwf') {
+    } else if (model === 'ecmwf' || model === 'aifs' || model === 'cwawrf') {
         if (currentHour >= 12 && currentHour < 24) {
             cycleHour = 0;
         } else {
             cycleHour = 12;
             cycleDate.setUTCDate(cycleDate.getUTCDate() - 1);
-        }
-    } else if (model === 'aifs') {
-        if (currentHour >= 12 && currentHour < 24) {
-            cycleHour = 0;
-        } else {
-            cycleHour = 12;
-            cycleDate.setUTCDate(cycleDate.getUTCDate() - 1);
-        }
-    } else if (model === 'cwawrf') {
-        if (currentHour >= 12 && currentHour < 24) {
-            cycleHour = 0;
-        } else {
-            cycleHour = 12;
-            cycleDate.setUTCDate(cycleDate.getUTCDate() - 1); // Yesterday
         }
     }
     
-    // Explicitly set the calculated model run hour in UTC
     cycleDate.setUTCHours(cycleHour, 0, 0, 0);
-    
-    // 3. Increment forecast validation window strictly via UTC milliseconds
     let validDate = new Date(cycleDate.getTime() + (targetHour * 60 * 60 * 1000));
     
-    // Clean, standard formatting helper string
     function formatStr(d) {
         let yyyy = d.getUTCFullYear();
         let mm = String(d.getUTCMonth() + 1).padStart(2, '0');
-        let dd = String(d.getOriginalDate ? d.getOriginalDate() : d.getUTCDate()).padStart(2, '0');
+        let dd = String(d.getUTCDate()).padStart(2, '0');
         let hh = String(d.getUTCHours()).padStart(2, '0');
         return `${yyyy}-${mm}-${dd} ${hh}:00 UTC`;
     }
@@ -293,7 +289,7 @@ function toggleRealtimeRadar(isVisible) {
 
 function toggleH9Satellite(isVisible) {
     if (!isVisible) { if (h9SatelliteLayer) { viewer.imageryLayers.remove(h9SatelliteLayer); h9SatelliteLayer = null; } return; }
-    const targetDate = new Date(); targetDate.setUTCDate(targetDate.getUTCDate());
+    const targetDate = new Date(); targetDate.setUTCDate(targetDate.getUTCDate() - 1);
     const year = targetDate.getUTCFullYear(), month = String(targetDate.getUTCMonth() + 1).padStart(2, '0'), day = String(targetDate.getUTCDate()).padStart(2, '0');
     const exactDateStr = `${year}-${month}-${day}`;
     if(satLayerCache[exactDateStr]) {
@@ -308,7 +304,7 @@ function toggleH9Satellite(isVisible) {
 
 function enforceLayerOrdering() {
     if (currentBaseLayer) viewer.imageryLayers.lowerToBottom(currentBaseLayer);
-    [velocityTextureLayer, h9SatelliteLayer, liveRadarLayer, combinedOutputLayer].forEach(layer => { if (layer) viewer.imageryLayers.raiseToTop(layer); }); 
+    [tempTextureLayer, velocityTextureLayer, h9SatelliteLayer, liveRadarLayer, combinedOutputLayer].forEach(layer => { if (layer) viewer.imageryLayers.raiseToTop(layer); }); 
 }
 
 async function fetchGzJson(url, token, callback) {
@@ -324,10 +320,9 @@ async function fetchGzJson(url, token, callback) {
 
 function updateWeatherLayers() {
     const localToken = ++currentUpdateToken;
-    [velocityTextureLayer, combinedOutputLayer].forEach(l => { if(l) viewer.imageryLayers.remove(l); });
-    velocityTextureLayer = combinedOutputLayer = activeDataset = null;
-    
-    // Refresh calculations based on current model criteria matching bash script limits
+    [velocityTextureLayer, combinedOutputLayer, tempTextureLayer].forEach(l => { if(l) viewer.imageryLayers.remove(l); });
+    velocityTextureLayer = combinedOutputLayer = tempTextureLayer = activeDataset = activeTempDataset = null;
+
     calculateRegularTimeDisplay();
 
     const model = document.getElementById('modelSelect').value;
@@ -345,14 +340,28 @@ function updateWeatherLayers() {
     
     const activeWindSpeed = document.getElementById('showWindSpeed').checked;
     const activeIsobars = document.getElementById('showIsobars').checked;
-    let levelQueryStr = level;
-    
-    if(activeWindSpeed || document.getElementById('showParticles').checked || document.getElementById('showCoastlines').checked) {
-        fetchGzJson(`${cdnBase}/${model}_${levelQueryStr}_f${targetHour}.json.gz`, localToken, data => {
+
+    // Handle 2m Temperature selection
+    if (level === '2t') {
+        fetchGzJson(`${cdnBase}/${model}_2t_f${targetHour}.json.gz`, localToken, data => {
+            if (!data) return;
+            activeTempDataset = data;
+            if (activeWindSpeed) renderTemperatureCanvas(data);
+        });
+        // Fetch 10m wind dataset for particle stream overlay when 2t is active
+        fetchGzJson(`${cdnBase}/${model}_10m_f${targetHour}.json.gz`, localToken, data => {
             if (!data || !data[0]) return;
             activeDataset = data;
-            renderVelocityCanvasStack(data, activeWindSpeed);
+            renderVelocityCanvasStack(data, false); // Draw particles/coastlines without overwriting temperature
         });
+    } else {
+        if(activeWindSpeed || document.getElementById('showParticles').checked || document.getElementById('showCoastlines').checked) {
+            fetchGzJson(`${cdnBase}/${model}_${level}_f${targetHour}.json.gz`, localToken, data => {
+                if (!data || !data[0]) return;
+                activeDataset = data;
+                renderVelocityCanvasStack(data, activeWindSpeed);
+            });
+        }
     }
     
     if (activeIsobars && model !== 'cwawrf') {
@@ -361,6 +370,28 @@ function updateWeatherLayers() {
             renderIsobarContours(data);
         });
     }
+}
+
+function renderTemperatureCanvas(jsonData) {
+    const { data, header } = jsonData;
+    const { nx, ny, lo1, la1, lo2, la2 } = header;
+    const canvasT = document.createElement('canvas'); canvasT.width = nx; canvasT.height = ny;
+    const ctxT = canvasT.getContext('2d');
+    const imgData = ctxT.createImageData(nx, ny);
+
+    for (let i = 0; i < data.length; i++) {
+        const cIdx = i * 4;
+        const color = getTempColor(data[i]);
+        imgData.data[cIdx] = color[0];
+        imgData.data[cIdx+1] = color[1];
+        imgData.data[cIdx+2] = color[2];
+        imgData.data[cIdx+3] = color[3];
+    }
+    ctxT.putImageData(imgData, 0, 0);
+
+    let w = lo1 > 180 ? lo1 - 360 : lo1, e = lo2 > 180 ? lo2 - 360 : lo2; if (e <= w) e += 360;
+    tempTextureLayer = viewer.imageryLayers.addImageryProvider(new Cesium.SingleTileImageryProvider({ url: canvasT.toDataURL(), rectangle: Cesium.Rectangle.fromDegrees(w, la2, e, la1) }));
+    enforceLayerOrdering();
 }
 
 function renderVelocityCanvasStack(jsonData, drawHeatmap) {
@@ -426,10 +457,18 @@ mouseHandler.setInputAction(function(movement) {
             const yIdx = Math.floor(((header.la1 - lat) / (header.la1 - header.la2)) * header.ny);
             const gridIdx = yIdx * header.nx + xIdx;
             let html = `<strong>📍 Location Data</strong><br>Lat: ${lat.toFixed(2)}° | Lon: ${lon.toFixed(2)}°<br>`;
+            
             if (gridIdx < activeDataset[0].data.length) {
                 const u = activeDataset[0].data[gridIdx], v = activeDataset[1].data[gridIdx], speed = Math.sqrt(u*u + v*v);
                 html += `<hr style="border:0; border-top:1px solid rgba(255,255,255,0.1); margin:4px 0;"><strong>💨 Velocity Metrics</strong><br>Speed: ${(speed / 0.514444).toFixed(1)} knots (${speed.toFixed(1)} m/s)`;
             }
+            
+            if (activeTempDataset && activeTempDataset.data && gridIdx < activeTempDataset.data.length) {
+                const tempK = activeTempDataset.data[gridIdx];
+                const tempC = (tempK - 273.15).toFixed(1);
+                html += `<br><strong>🌡️ 2m Temperature:</strong> ${tempC}°C (${(tempC * 9/5 + 32).toFixed(1)}°F)`;
+            }
+            
             trackingLabel.style.display = 'block';
             trackingLabel.style.left = (movement.endPosition.x + 15) + 'px';
             trackingLabel.style.top = (movement.endPosition.y + 15) + 'px';

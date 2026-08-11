@@ -461,9 +461,11 @@ fetchWebGLWindCoastlines();
 viewer.camera.setView({ destination: Cesium.Cartesian3.fromDegrees(121.5, 24.0, 3000000), orientation: { heading: Cesium.Math.toRadians(0.0), pitch: Cesium.Math.toRadians(-90.0) } });
 
 updateWeatherLayers();
-fetch("https://your-subdomain.loca.lt/api")
-  .then(res => res.json())
-  .then(data => console.log(data));
+fetch("https://lc2nz3kv-5500.asse.devtunnels.ms/demo/?skip_tunnel_warning=true/", {
+  headers: {
+    "X-Tunnel-Skip-AntiPhishing-Page": "true"
+  }
+});
 </script>
 </body>
 </html>
